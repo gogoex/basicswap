@@ -88,8 +88,8 @@ DASH_VERSION_TAG = os.getenv("DASH_VERSION_TAG", "")
 FIRO_VERSION = os.getenv("FIRO_VERSION", "0.14.15.0")
 FIRO_VERSION_TAG = os.getenv("FIRO_VERSION_TAG", "")
 
-NAV_VERSION = os.getenv("NAV_VERSION", "7.0.3")
-NAV_VERSION_TAG = os.getenv("NAV_VERSION_TAG", "")
+NAVIO_VERSION = os.getenv("NAVIO_VERSION", "53db904f3bcc")
+NAVIO_VERSION_TAG = os.getenv("NAVIO_VERSION_TAG", "")
 
 BITCOINCASH_VERSION = os.getenv("BITCOINCASH_VERSION", "28.0.1")
 BITCOINCASH_VERSION_TAG = os.getenv("BITCOINCASH_VERSION_TAG", "")
@@ -109,13 +109,12 @@ known_coins = {
     "pivx": (PIVX_VERSION, PIVX_VERSION_TAG, ("fuzzbawls",)),
     "dash": (DASH_VERSION, DASH_VERSION_TAG, ("pasta",)),
     "firo": (FIRO_VERSION, FIRO_VERSION_TAG, ("reuben",)),
-    "navcoin": (NAV_VERSION, NAV_VERSION_TAG, ("nav_builder",)),
+    "navio": (NAVIO_VERSION, NAVIO_VERSION_TAG, ("navio_builder",)),
     "bitcoincash": (BITCOINCASH_VERSION, BITCOINCASH_VERSION_TAG, ("Calin_Culianu",)),
     "dogecoin": (DOGECOIN_VERSION, DOGECOIN_VERSION_TAG, ("tecnovert",)),
 }
 
 disabled_coins = [
-    "navcoin",
 ]
 
 # Network clients
@@ -149,7 +148,7 @@ expected_key_ids = {
         "02B8E7D002167C8B451AF05FE2F3D7916E722D38",
     ),
     "reuben": ("0186454D63E83D85EF91DE4E1290A1D0FA7EE109",),
-    "nav_builder": ("1BF9B51BAED51BA0B3A174EE2782262BF6E7FADB",),
+    "navio_builder": ("4DC1A6D4CB76395724FB97DBA05B6DF4513EA050",),
     "nicolasdorier": (
         "AB4CFA9895ACA0DBE27F6B346618763EF09186FE",
         "015B4C837B245509E4AC8995223FDA69DEBEA82D",
@@ -280,11 +279,11 @@ FIRO_ONION_PORT = int(os.getenv("FIRO_ONION_PORT", 8168))  # nDefaultPort
 FIRO_RPC_USER = os.getenv("FIRO_RPC_USER", "")
 FIRO_RPC_PWD = os.getenv("FIRO_RPC_PWD", "")
 
-NAV_RPC_HOST = os.getenv("NAV_RPC_HOST", "127.0.0.1")
-NAV_RPC_PORT = int(os.getenv("NAV_RPC_PORT", 44444))
-NAV_ONION_PORT = int(os.getenv("NAV_ONION_PORT", 8334))  # TODO?
-NAV_RPC_USER = os.getenv("NAV_RPC_USER", "")
-NAV_RPC_PWD = os.getenv("NAV_RPC_PWD", "")
+NAVIO_RPC_HOST = os.getenv("NAV_RPC_HOST", "127.0.0.1")
+NAVIO_RPC_PORT = int(os.getenv("NAV_RPC_PORT", 44444))
+NAVIO_ONION_PORT = int(os.getenv("NAV_ONION_PORT", 8334))
+NAVIO_RPC_USER = os.getenv("NAV_RPC_USER", "")
+NAVIO_RPC_PWD = os.getenv("NAV_RPC_PWD", "")
 
 BCH_RPC_HOST = os.getenv("BCH_RPC_HOST", "127.0.0.1")
 BCH_RPC_PORT = int(os.getenv("BCH_RPC_PORT", 19997))
@@ -791,6 +790,7 @@ def prepareCore(coin, version_data, settings, data_dir, extra_opts={}):
             filename_extra = PARTICL_LINUX_EXTRA
 
     signing_key_name = signers[0]
+    assert_sig_path = None
     if coin == "monero":
         use_file_ext = "tar.bz2" if FILE_EXT == "tar.gz" else FILE_EXT
         release_filename = "{}-{}-{}.{}".format(coin, version, BIN_ARCH, use_file_ext)
@@ -888,7 +888,7 @@ def prepareCore(coin, version_data, settings, data_dir, extra_opts={}):
             downloadFile(assert_sig_url, assert_sig_path)
     else:
         major_version = int(version.split(".")[0])
-        use_guix: bool = coin in ("dash",) or major_version >= 22
+        use_guix: bool = coin in ("dash", "navio",) or major_version >= 22
         arch_name = BIN_ARCH
         if os_name == "osx" and use_guix:
             arch_name = "x86_64-apple-darwin"
@@ -1018,16 +1018,11 @@ def prepareCore(coin, version_data, settings, data_dir, extra_opts={}):
             assert_url = "https://github.com/firoorg/firo/releases/download/v{}/SHA256SUMS".format(
                 version + version_tag
             )
-        elif coin == "navcoin":
-            release_filename = "{}-{}-{}.{}".format(coin, version, BIN_ARCH, FILE_EXT)
-            release_url = "https://github.com/navcoin/navcoin-core/releases/download/{}/{}".format(
-                version + version_tag, release_filename
-            )
-            assert_filename = "SHA256SUM_7.0.3.asc"
-            assert_sig_filename = "SHA256SUM_7.0.3.asc.sig"
-            assert_url = "https://github.com/navcoin/navcoin-core/releases/download/{}/{}".format(
-                version + version_tag, assert_filename
-            )
+        elif coin == "navio":
+            release_filename = f"{coin}-{version}-{BIN_ARCH}.{FILE_EXT}"
+            base_url = "https://releases.nav.io"
+            release_url = f"{base_url}/{release_filename}"
+            assert_url = f"{base_url}/SHA256SUMS-{version}"
         else:
             raise ValueError("Unknown coin")
 
@@ -1047,10 +1042,9 @@ def prepareCore(coin, version_data, settings, data_dir, extra_opts={}):
             "bitcoincash",
         ):
             assert_sig_url = assert_url + (".asc" if use_guix else ".sig")
-            if coin not in ("nav",):
-                assert_sig_filename = "{}-{}-{}-build-{}.assert.sig".format(
-                    coin, os_name, version, signing_key_name
-                )
+            assert_sig_filename = "{}-{}-{}-build-{}.assert.sig".format(
+                coin, os_name, version, signing_key_name
+            )
             assert_sig_path = os.path.join(bin_dir, assert_sig_filename)
             if not os.path.exists(assert_sig_path):
                 downloadFile(assert_sig_url, assert_sig_path)
@@ -1083,9 +1077,7 @@ def prepareCore(coin, version_data, settings, data_dir, extra_opts={}):
                     for key in rv.fingerprints:
                         gpg.trust_keys(rv.fingerprints[0], "TRUST_FULLY")
 
-    if coin in ("navcoin",):
-        pubkey_filename = "{}_builder.pgp".format(coin)
-    elif coin in ("decred",):
+    if coin in ("decred",):
         pubkey_filename = "{}_release.pgp".format(coin)
     elif coin in ("dogecoin",):
         pubkey_filename = "particl_{}.pgp".format(signing_key_name)
@@ -1110,6 +1102,10 @@ def prepareCore(coin, version_data, settings, data_dir, extra_opts={}):
         pubkeyurls.append(
             "https://gitlab.com/bitcoin-cash-node/bitcoin-cash-node/-/raw/master/contrib/gitian-signing/pubkeys.txt"
         )
+    if coin == "navio":
+        pubkeyurls.append(
+            "https://releases.nav.io/navio-build-signing-public.asc"
+        )
 
     coin_id = getCoinIdFromName(coin)
     ticker: str = chainparams[coin_id]["ticker"]
@@ -1131,22 +1127,8 @@ def prepareCore(coin, version_data, settings, data_dir, extra_opts={}):
             importPubkey(gpg, pubkey_filename, pubkeyurls)
             with open(assert_path, "rb") as fp:
                 verified = gpg.verify_file(fp)
-    elif coin in ("navcoin"):
-        with open(assert_sig_path, "rb") as fp:
-            verified = gpg.verify_file(fp)
-
-        if not isValidSignature(verified) and verified.username is None:
-            logger.warning("Signature made by unknown key.")
-            importPubkey(gpg, pubkey_filename, pubkeyurls)
-            with open(assert_sig_path, "rb") as fp:
-                verified = gpg.verify_file(fp)
-
-        # .sig file is not a detached signature, recheck release hash in decrypted data
-        logger.warning("Double checking Navcoin release hash.")
-        with open(assert_sig_path, "rb") as fp:
-            decrypted = gpg.decrypt_file(fp)
-            assert release_hash in str(decrypted)
     else:
+        assert assert_sig_path is not None
         with open(assert_sig_path, "rb") as fp:
             verified = gpg.verify_file(fp, assert_path)
         if not isValidSignature(verified) and verified.username is None:
@@ -1334,12 +1316,8 @@ def prepareDataDir(coin, settings, chain, particl_mnemonic, extra_opts={}):
         exitWithError(f"{core_conf_path} exists")
     with open(core_conf_path, "w") as fp:
         if chain != "mainnet":
-            if coin in ("navcoin",):
-                chainname = "devnet" if chain == "regtest" else chain
-                fp.write(chainname + "=1\n")
-            else:
-                fp.write(chain + "=1\n")
-            if coin not in ("firo", "navcoin"):
+            fp.write(chain + "=1\n")
+            if coin not in ("firo"):
                 if chain == "testnet":
                     fp.write("[test]\n\n")
                 elif chain == "regtest":
@@ -1476,13 +1454,13 @@ def prepareDataDir(coin, settings, chain, particl_mnemonic, extra_opts={}):
                         FIRO_RPC_USER, salt, password_to_hmac(salt, FIRO_RPC_PWD)
                     )
                 )
-        elif coin == "navcoin":
+        elif coin == "navio":
             fp.write("prune=4000\n")
             fp.write("fallbackfee=0.0002\n")
-            if NAV_RPC_USER != "":
+            if NAVIO_RPC_USER != "":
                 fp.write(
                     "rpcauth={}:{}${}\n".format(
-                        NAV_RPC_USER, salt, password_to_hmac(salt, NAV_RPC_PWD)
+                        NAVIO_RPC_USER, salt, password_to_hmac(salt, NAVIO_RPC_PWD)
                     )
                 )
         else:
@@ -2740,19 +2718,19 @@ def main():
             "core_version_group": 14,
             "min_relay_fee": 0.00001,
         },
-        "navcoin": {
+        "navio": {
             "connection_type": "rpc",
             "manage_daemon": shouldManageDaemon("NAV"),
-            "rpchost": NAV_RPC_HOST,
-            "rpcport": NAV_RPC_PORT + port_offset,
-            "onionport": NAV_ONION_PORT + port_offset,
-            "datadir": os.getenv("NAV_DATA_DIR", os.path.join(data_dir, "navcoin")),
-            "bindir": os.path.join(bin_dir, "navcoin"),
+            "rpchost": NAVIO_RPC_HOST,
+            "rpcport": NAVIO_RPC_PORT + port_offset,
+            "onionport": NAVIO_ONION_PORT + port_offset,
+            "datadir": os.getenv("NAVIO_DATA_DIR", os.path.join(data_dir, "navio")),
+            "bindir": os.path.join(bin_dir, "navio"),
             "use_segwit": True,
             "use_csv": True,
             "blocks_confirmed": 1,
             "conf_target": 2,
-            "core_version_no": getKnownVersion("navcoin"),
+            "core_version_no": getKnownVersion("navio"),
             "core_version_group": 18,
             "chain_lookups": "local",
             "startup_tries": 40,
@@ -2852,9 +2830,9 @@ def main():
     if FIRO_RPC_USER != "":
         chainclients["firo"]["rpcuser"] = FIRO_RPC_USER
         chainclients["firo"]["rpcpassword"] = FIRO_RPC_PWD
-    if NAV_RPC_USER != "":
-        chainclients["nav"]["rpcuser"] = NAV_RPC_USER
-        chainclients["nav"]["rpcpassword"] = NAV_RPC_PWD
+    if NAVIO_RPC_USER != "":
+        chainclients["navio"]["rpcuser"] = NAVIO_RPC_USER
+        chainclients["navio"]["rpcpassword"] = NAVIO_RPC_PWD
 
     chainclients["monero"]["walletsdir"] = os.getenv(
         "XMR_WALLETS_DIR", chainclients["monero"]["datadir"]

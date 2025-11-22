@@ -28,7 +28,7 @@ class Coins(IntEnum):
     PIVX = 11
     DASH = 12
     FIRO = 13
-    NAV = 14
+    NAVIO = 14
     LTC_MWEB = 15
     # ZANO = 16
     BCH = 17
@@ -464,8 +464,8 @@ chainparams = {
             "max_amount": 10000000 * COIN,
         },
     },
-    Coins.NAV: {
-        "name": "navcoin",
+    Coins.NAVIO: {
+        "name": "navio",
         "ticker": "NAV",
         "message_magic": "Navcoin Signed Message:\n",
         "blocks_target": 30,
