@@ -1460,14 +1460,9 @@ def prepareDataDir(coin, settings, chain, particl_mnemonic, extra_opts={}):
                 ["prune", "4000"],
                 ["fallbackfee", "0.0002"],
                 ["server", "1"],
-                ["listern", "1"],
-                ["testnet", "1"],
-                ["rpcuser", "user"],
-                ["rpcpassword", "password"],
+                ["listen", "1"],
                 ["addnode", "testnet.nav.io"],
                 ["addnode", "testnet2.nav.io"],
-                ["rpcuser", "user"],
-                ["rpcpassword", "password"],
             ]
             for kv in kvs:
               fp.write(f"{kv[0]}={kv[1]}\n")
@@ -1843,6 +1838,7 @@ def initialise_wallets(
             Coins.DCR,
             Coins.DASH,
             Coins.NMC,
+            Coins.NAVIO,
         )
         # Always start Particl, it must be running to initialise a wallet in addcoin mode
         # Particl must be loaded first as subsequent coins are initialised from the Particl mnemonic

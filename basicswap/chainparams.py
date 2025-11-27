@@ -492,6 +492,7 @@ chainparams = {
             "bip44": 1,
             "min_amount": 100000,
             "max_amount": 10000000 * COIN,
+            "name": "testnet6",
         },
         "regtest": {
             "rpcport": 44446,

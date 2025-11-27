@@ -1068,6 +1068,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 "dash",
                 "firo",
                 "bitcoincash",
+                "navio",
             ):
                 pidfilename += "d"
 
