@@ -1037,10 +1037,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             from .interface.firo import FIROInterface
 
             return FIROInterface(self.coin_clients[coin], self.chain, self)
-        elif coin == Coins.NAV:
-            from .interface.nav import NAVInterface
+        elif coin == Coins.NAVIO:
+            from .interface.navio import NAVIOInterface
 
-            return NAVInterface(self.coin_clients[coin], self.chain, self)
+            return NAVIOInterface(self.coin_clients[coin], self.chain, self)
         else:
             raise ValueError("Unknown coin type")
 

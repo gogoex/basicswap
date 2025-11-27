@@ -88,7 +88,7 @@ DASH_VERSION_TAG = os.getenv("DASH_VERSION_TAG", "")
 FIRO_VERSION = os.getenv("FIRO_VERSION", "0.14.15.0")
 FIRO_VERSION_TAG = os.getenv("FIRO_VERSION_TAG", "")
 
-NAVIO_VERSION = os.getenv("NAVIO_VERSION", "53db904f3bcc")
+NAVIO_VERSION = os.getenv("NAVIO_VERSION", "0.1.0-rc1")
 NAVIO_VERSION_TAG = os.getenv("NAVIO_VERSION_TAG", "")
 
 BITCOINCASH_VERSION = os.getenv("BITCOINCASH_VERSION", "28.0.1")
@@ -1455,8 +1455,23 @@ def prepareDataDir(coin, settings, chain, particl_mnemonic, extra_opts={}):
                     )
                 )
         elif coin == "navio":
-            fp.write("prune=4000\n")
-            fp.write("fallbackfee=0.0002\n")
+            # TODO use mainnet config
+            kvs = [
+                ["prune", "4000"],
+                ["fallbackfee", "0.0002"],
+                ["server", "1"],
+                ["listern", "1"],
+                ["testnet", "1"],
+                ["rpcuser", "user"],
+                ["rpcpassword", "password"],
+                ["addnode", "testnet.nav.io"],
+                ["addnode", "testnet2.nav.io"],
+                ["rpcuser", "user"],
+                ["rpcpassword", "password"],
+            ]
+            for kv in kvs:
+              fp.write(f"{kv[0]}={kv[1]}\n")
+
             if NAVIO_RPC_USER != "":
                 fp.write(
                     "rpcauth={}:{}${}\n".format(
