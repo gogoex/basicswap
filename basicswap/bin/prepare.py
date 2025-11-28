@@ -2744,7 +2744,6 @@ def main():
             "core_version_no": getKnownVersion("navio"),
             "core_version_group": 18,
             "chain_lookups": "local",
-            "startup_tries": 40,
         },
         "bitcoincash": {
             "connection_type": "rpc",
