@@ -279,11 +279,11 @@ FIRO_ONION_PORT = int(os.getenv("FIRO_ONION_PORT", 8168))  # nDefaultPort
 FIRO_RPC_USER = os.getenv("FIRO_RPC_USER", "")
 FIRO_RPC_PWD = os.getenv("FIRO_RPC_PWD", "")
 
-NAVIO_RPC_HOST = os.getenv("NAV_RPC_HOST", "127.0.0.1")
-NAVIO_RPC_PORT = int(os.getenv("NAV_RPC_PORT", 44444))
-NAVIO_ONION_PORT = int(os.getenv("NAV_ONION_PORT", 8334))
-NAVIO_RPC_USER = os.getenv("NAV_RPC_USER", "")
-NAVIO_RPC_PWD = os.getenv("NAV_RPC_PWD", "")
+NAVIO_RPC_HOST = os.getenv("NAVIO_RPC_HOST", "127.0.0.1")
+NAVIO_RPC_PORT = int(os.getenv("NAVIO_RPC_PORT", 33677)) # TODO this is for testnet6
+NAVIO_ONION_PORT = int(os.getenv("NAVIO_ONION_PORT", 33678)) # TODO this is for testnet6
+NAVIO_RPC_USER = os.getenv("NAVIO_RPC_USER", "user")
+NAVIO_RPC_PWD = os.getenv("NAVIO_RPC_PWD", "password")
 
 BCH_RPC_HOST = os.getenv("BCH_RPC_HOST", "127.0.0.1")
 BCH_RPC_PORT = int(os.getenv("BCH_RPC_PORT", 19997))
@@ -1019,7 +1019,19 @@ def prepareCore(coin, version_data, settings, data_dir, extra_opts={}):
                 version + version_tag
             )
         elif coin == "navio":
-            release_filename = f"{coin}-{version}-{BIN_ARCH}.{FILE_EXT}"
+            bin_arch = BIN_ARCH
+            if "BIN_ARCH" not in os.environ and USE_PLATFORM == "Darwin":
+                machine = platform.machine()
+                if machine == "arm64":
+                    # TODO use this after arm64 build becomes available
+                    #bin_arch = "arm64-apple-darwin"
+                    bin_arch = "x86_64-apple-darwin"
+                elif machine == "x86_64":
+                    bin_arch = "x86_64-apple-darwin"
+                else:
+                  raise ValueError(f"Unsupported macOS arch for {con}: {machine}")
+
+            release_filename = f"{coin}-{version}-{bin_arch}.{FILE_EXT}"
             base_url = "https://releases.nav.io"
             release_url = f"{base_url}/{release_filename}"
             assert_url = f"{base_url}/SHA256SUMS-{version}"
@@ -2005,6 +2017,26 @@ def initialise_wallets(
                         swap_client.ci(c).unlockWallet(
                             WALLET_ENCRYPTION_PWD, check_seed=False
                         )
+                    elif c in (Coins.NAVIO,):
+                        swap_client.callcoinrpc(
+                            c,
+                            "createwallet",
+                            [
+                                wallet_name,
+                                False,
+                                True,
+                                WALLET_ENCRYPTION_PWD,
+                                False,
+                                use_descriptors,
+                                True,  # load_on_startup
+                                False, # external_signer
+                                True,  # blsct
+                                False, # storage_output
+                            ],
+                        )
+                        swap_client.ci(c).unlockWallet(
+                            WALLET_ENCRYPTION_PWD, check_seed=False
+                        )
                     else:
                         swap_client.callcoinrpc(
                             c,
@@ -2731,7 +2763,7 @@ def main():
         },
         "navio": {
             "connection_type": "rpc",
-            "manage_daemon": shouldManageDaemon("NAV"),
+            "manage_daemon": shouldManageDaemon("NAVIO"),
             "rpchost": NAVIO_RPC_HOST,
             "rpcport": NAVIO_RPC_PORT + port_offset,
             "onionport": NAVIO_ONION_PORT + port_offset,
@@ -2777,7 +2809,7 @@ def main():
             "core_version_group": 23,
             "min_relay_fee": 0.01,  # RECOMMENDED_MIN_TX_FEE
         },
-    }
+    } 
 
     for coin_name, coin_settings in chainclients.items():
         coin_id = getCoinIdFromName(coin_name)

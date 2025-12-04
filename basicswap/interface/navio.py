@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 # Copyright (c) 2023 tecnovert
@@ -99,8 +98,10 @@ class NAVIOInterface(BTCInterface):
         return 1
 
     # BTCInterface
-    def getWalletSeedID(self):
-        return self.rpc("getwalletinfo")["hdmasterkeyid"]
+    def getWalletSeedID(self) -> str:
+        wi = self.rpc_wallet("getwalletinfo")
+        return "Not found" if "hdseedid" not in wi else wi["hdseedid"]
+
 
     # BTCInterface
     def withdrawCoin(self, value, addr_to: str, subfee: bool):
@@ -118,17 +119,11 @@ class NAVIOInterface(BTCInterface):
         return bytes.fromhex(rv["hex"])
 
     # BTCInterface
-    def checkExpectedSeed(self, key_hash: str):
-        try:
-            rv = self.rpc("dumpmnemonic")
-            entropy = Mnemonic("english").to_entropy(rv.split(" "))
-
-            entropy_hash = self.getAddressHashFromKey(entropy)[::-1].hex()
-            self._have_checked_seed = True
-            return entropy_hash == key_hash
-        except Exception as e:
-            self._log.warning("checkExpectedSeed failed: {}".format(str(e)))
-        return False
+    def checkExpectedSeed(self, expect_seedid: str) -> bool:
+        wallet_seed_id = self.getWalletSeedID()
+        self._expect_seedid_hex = expect_seedid
+        self._have_checked_seed = True
+        return expect_seedid == wallet_seed_id
 
     # private
     def getScriptForP2PKH(self, pkh: bytes) -> bytearray:
@@ -394,15 +389,9 @@ class NAVIOInterface(BTCInterface):
             "getnewaddress",
             [
                 label,
+                "blsct",
             ],
         )
-        if use_segwit:
-            return self.rpc(
-                "addwitnessaddress",
-                [
-                    address,
-                ],
-            )
         return address
 
     # BTCInterface

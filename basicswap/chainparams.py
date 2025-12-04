@@ -466,7 +466,7 @@ chainparams = {
     },
     Coins.NAVIO: {
         "name": "navio",
-        "ticker": "NAV",
+        "ticker": "NAVIO",
         "message_magic": "Navcoin Signed Message:\n",
         "blocks_target": 30,
         "decimal_places": 8,

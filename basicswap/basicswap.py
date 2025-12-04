@@ -11604,7 +11604,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 rv["blind_unconfirmed"] = walletinfo["unconfirmed_blind"]
             elif coin in (Coins.XMR, Coins.WOW):
                 rv["main_address"] = self.getCachedMainWalletAddress(ci)
-            elif coin == Coins.NAV:
+            elif coin == Coins.NAVIO:
                 rv["immature"] = walletinfo["immature_balance"]
             elif coin == Coins.LTC:
                 try:
