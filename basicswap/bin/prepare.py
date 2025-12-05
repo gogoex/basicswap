@@ -1023,9 +1023,7 @@ def prepareCore(coin, version_data, settings, data_dir, extra_opts={}):
             if "BIN_ARCH" not in os.environ and USE_PLATFORM == "Darwin":
                 machine = platform.machine()
                 if machine == "arm64":
-                    # TODO use this after arm64 build becomes available
-                    #bin_arch = "arm64-apple-darwin"
-                    bin_arch = "x86_64-apple-darwin"
+                    bin_arch = "arm64-apple-darwin"
                 elif machine == "x86_64":
                     bin_arch = "x86_64-apple-darwin"
                 else:
