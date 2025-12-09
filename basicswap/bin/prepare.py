@@ -279,11 +279,11 @@ FIRO_ONION_PORT = int(os.getenv("FIRO_ONION_PORT", 8168))  # nDefaultPort
 FIRO_RPC_USER = os.getenv("FIRO_RPC_USER", "")
 FIRO_RPC_PWD = os.getenv("FIRO_RPC_PWD", "")
 
-NAVIO_RPC_HOST = os.getenv("NAVIO_RPC_HOST", "127.0.0.1")
-NAVIO_RPC_PORT = int(os.getenv("NAVIO_RPC_PORT", 33377)) # TODO this is for testnet6
-NAVIO_ONION_PORT = int(os.getenv("NAVIO_ONION_PORT", 33378)) # TODO this is for testnet6
-NAVIO_RPC_USER = os.getenv("NAVIO_RPC_USER", "")
-NAVIO_RPC_PWD = os.getenv("NAVIO_RPC_PWD", "")
+NAV_RPC_HOST = os.getenv("NAV_RPC_HOST", "127.0.0.1")
+NAV_RPC_PORT = int(os.getenv("NAV_RPC_PORT", 33377)) # TODO this is for testnet6
+NAV_ONION_PORT = int(os.getenv("NAV_ONION_PORT", 33378)) # TODO this is for testnet6
+NAV_RPC_USER = os.getenv("NAV_RPC_USER", "")
+NAV_RPC_PWD = os.getenv("NAV_RPC_PWD", "")
 
 BCH_RPC_HOST = os.getenv("BCH_RPC_HOST", "127.0.0.1")
 BCH_RPC_PORT = int(os.getenv("BCH_RPC_PORT", 19997))
@@ -1472,15 +1472,14 @@ def prepareDataDir(coin, settings, chain, particl_mnemonic, extra_opts={}):
                 ["server", "1"],
                 ["listen", "1"],
                 ["addnode", "testnet.nav.io"],
-                ["addnode", "testnet2.nav.io"],
             ]
             for kv in kvs:
               fp.write(f"{kv[0]}={kv[1]}\n")
 
-            if NAVIO_RPC_USER != "":
+            if NAV_RPC_USER != "":
                 fp.write(
                     "rpcauth={}:{}${}\n".format(
-                        NAVIO_RPC_USER, salt, password_to_hmac(salt, NAVIO_RPC_PWD)
+                        NAV_RPC_USER, salt, password_to_hmac(salt, NAV_RPC_PWD)
                     )
                 )
         else:
@@ -1848,7 +1847,7 @@ def initialise_wallets(
             Coins.DCR,
             Coins.DASH,
             Coins.NMC,
-            Coins.NAVIO,
+            Coins.NAV,
         )
         # Always start Particl, it must be running to initialise a wallet in addcoin mode
         # Particl must be loaded first as subsequent coins are initialised from the Particl mnemonic
@@ -2015,7 +2014,7 @@ def initialise_wallets(
                         swap_client.ci(c).unlockWallet(
                             WALLET_ENCRYPTION_PWD, check_seed=False
                         )
-                    elif c in (Coins.NAVIO,):
+                    elif c in (Coins.NAV,):
                         swap_client.callcoinrpc(
                             c,
                             "createwallet",
@@ -2761,11 +2760,11 @@ def main():
         },
         "navio": {
             "connection_type": "rpc",
-            "manage_daemon": shouldManageDaemon("NAVIO"),
-            "rpchost": NAVIO_RPC_HOST,
-            "rpcport": NAVIO_RPC_PORT + port_offset,
-            "onionport": NAVIO_ONION_PORT + port_offset,
-            "datadir": os.getenv("NAVIO_DATA_DIR", os.path.join(data_dir, "navio")),
+            "manage_daemon": shouldManageDaemon("NAV"),
+            "rpchost": NAV_RPC_HOST,
+            "rpcport": NAV_RPC_PORT + port_offset,
+            "onionport": NAV_ONION_PORT + port_offset,
+            "datadir": os.getenv("NAV_DATA_DIR", os.path.join(data_dir, "navio")),
             "bindir": os.path.join(bin_dir, "navio"),
             "use_segwit": True,
             "use_csv": True,
@@ -2870,9 +2869,9 @@ def main():
     if FIRO_RPC_USER != "":
         chainclients["firo"]["rpcuser"] = FIRO_RPC_USER
         chainclients["firo"]["rpcpassword"] = FIRO_RPC_PWD
-    if NAVIO_RPC_USER != "":
-        chainclients["navio"]["rpcuser"] = NAVIO_RPC_USER
-        chainclients["navio"]["rpcpassword"] = NAVIO_RPC_PWD
+    if NAV_RPC_USER != "":
+        chainclients["navio"]["rpcuser"] = NAV_RPC_USER
+        chainclients["navio"]["rpcpassword"] = NAV_RPC_PWD
 
     chainclients["monero"]["walletsdir"] = os.getenv(
         "XMR_WALLETS_DIR", chainclients["monero"]["datadir"]

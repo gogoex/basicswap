@@ -275,7 +275,7 @@ const ApiManager = (function() {
                         ? window.CoinManager.getAllCoins().map(c => c.symbol).filter(symbol => symbol && symbol.trim() !== '')
                         : (window.config.coins
                             ? window.config.coins.map(c => c.symbol).filter(symbol => symbol && symbol.trim() !== '')
-                            : ['BTC', 'XMR', 'PART', 'BCH', 'PIVX', 'FIRO', 'DASH', 'LTC', 'DOGE', 'DCR', 'NMC', 'WOW', 'NAVIO']);
+                            : ['BTC', 'XMR', 'PART', 'BCH', 'PIVX', 'FIRO', 'DASH', 'LTC', 'DOGE', 'DCR', 'NMC', 'WOW', 'NAV']);
 
                     const response = await this.makeRequest('/json/coinvolume', 'POST', {}, {
                         coins: coinSymbols.join(','),

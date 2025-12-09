@@ -10,18 +10,18 @@ from basicswap.interface.btc import (
 )
 from basicswap.chainparams import Coins
 
-class NAVIOInterface(BTCInterface):
+class NAVInterface(BTCInterface):
     @staticmethod
     def coin_type() -> Coins: # type: ignore[override]
-        return Coins.NAVIO
+        return Coins.NAV
 
     def __init__(self, coin_settings, network, swap_client=None):
-        super(NAVIOInterface, self).__init__(coin_settings, network, swap_client)
+        super(NAVInterface, self).__init__(coin_settings, network, swap_client)
 
     def initialiseWallet(self, key_bytes, restore_time: int = -1):
         del restore_time
         #key_wif = self.encodeKey(key_bytes)
-        # TODO NAVIO remove this
+        # TODO NAV remove this
         key_wif = "322cf308b2a883ce247514be112afdb64c71c562f6ed16d0a8d83ed00f33b306"
         try:
             self.rpc_wallet("setblsctseed", [key_wif])
