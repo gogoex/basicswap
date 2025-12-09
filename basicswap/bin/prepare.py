@@ -280,10 +280,10 @@ FIRO_RPC_USER = os.getenv("FIRO_RPC_USER", "")
 FIRO_RPC_PWD = os.getenv("FIRO_RPC_PWD", "")
 
 NAVIO_RPC_HOST = os.getenv("NAVIO_RPC_HOST", "127.0.0.1")
-NAVIO_RPC_PORT = int(os.getenv("NAVIO_RPC_PORT", 33677)) # TODO this is for testnet6
-NAVIO_ONION_PORT = int(os.getenv("NAVIO_ONION_PORT", 33678)) # TODO this is for testnet6
-NAVIO_RPC_USER = os.getenv("NAVIO_RPC_USER", "user")
-NAVIO_RPC_PWD = os.getenv("NAVIO_RPC_PWD", "password")
+NAVIO_RPC_PORT = int(os.getenv("NAVIO_RPC_PORT", 33377)) # TODO this is for testnet6
+NAVIO_ONION_PORT = int(os.getenv("NAVIO_ONION_PORT", 33378)) # TODO this is for testnet6
+NAVIO_RPC_USER = os.getenv("NAVIO_RPC_USER", "")
+NAVIO_RPC_PWD = os.getenv("NAVIO_RPC_PWD", "")
 
 BCH_RPC_HOST = os.getenv("BCH_RPC_HOST", "127.0.0.1")
 BCH_RPC_PORT = int(os.getenv("BCH_RPC_PORT", 19997))

@@ -1426,7 +1426,7 @@ class BTCInterface(Secp256k1Interface):
         return pubkey.verify(sig[:-1], sig_hash, hasher=None)  # Pop the hashtype byte
 
     def fundTx(self, tx: bytes, feerate) -> bytes:
-        feerate_str = self.format_amount(feerate)
+        feerate_str = self.fo(feerate)
         # TODO: Unlock unspents if bid cancelled
         # TODO: Manually select only segwit prevouts
         options = {

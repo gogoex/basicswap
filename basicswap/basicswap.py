@@ -1662,6 +1662,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             return
 
         root_key = self.getWalletKey(interface_type, 1)
+        # TODO NAVIO delete this
+        if interface_type == Coins.LTC:
+            root_key = bytes.fromhex("e2a6e2cdbac6007288600d9c884cc66389bad8abb3cd73c3092b904a67946e8f")
+        self.log.info(f"Root key ({ci.coin_name()}): {root_key.hex()}")
         try:
             ci.initialiseWallet(root_key, restore_time)
         except Exception as e:
@@ -3059,6 +3063,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     f"Setting seed ID for coin {ci.coin_name()} from master key."
                 )
                 root_key = self.getWalletKey(c, 1)
+                # TODO NAVIO delete this
+                self.log.info(f"root_key for {c}: {rk}", rk = root_key.hex())
                 self.storeSeedIDForCoin(root_key, c)
                 expect_seedid: str = self.getStringKV(seed_key)
             else:
@@ -11604,8 +11610,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 rv["blind_unconfirmed"] = walletinfo["unconfirmed_blind"]
             elif coin in (Coins.XMR, Coins.WOW):
                 rv["main_address"] = self.getCachedMainWalletAddress(ci)
-            elif coin == Coins.NAVIO:
-                rv["immature"] = walletinfo["immature_balance"]
             elif coin == Coins.LTC:
                 try:
                     rv["mweb_address"] = self.getCachedStealthAddressForCoin(
@@ -12464,6 +12468,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             return "bitcoin-cash"
         if coin_id == Coins.FIRO:
             return "zcoin"
+        if coin_id == Coins.NAVIO:
+            return "nav-coin"
 
         # Handle coin variants that use base coin chainparams
         use_coinid = coin_id
@@ -12550,7 +12556,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     coin_id = exchange_name_map[k]
                     cache_key = (coin_id, currency_to, rate_source)
                     self._price_cache[cache_key] = {
-                        "rate": v[ticker_to],
+                        "rate": v[ticker_to], 
                         "timestamp": now,
                     }
 

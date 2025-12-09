@@ -65,8 +65,7 @@ const api = {
 
             window.config.coins.forEach(coin => {
                 const symbol = coin.symbol.toLowerCase();
-                const coinData = priceData[symbol] || priceData[coin.name.toLowerCase()];
-
+                const coinData = priceData[symbol] || priceData[coin.name.toLowerCase()] || priceData[coin.coingeckoId];
                 if (coinData && coinData.usd) {
                     let priceBtc;
                     if (symbol === 'btc') {
@@ -410,7 +409,7 @@ const ui = {
   },
 
   setActiveContainer: (containerId) => {
-    const containerIds = ['btc', 'xmr', 'part', 'pivx', 'firo', 'dash', 'ltc', 'doge', 'eth', 'dcr', 'nmc', 'zano', 'wow', 'bch'].map(id => `${id}-container`);
+    const containerIds = ['btc', 'xmr', 'part', 'pivx', 'firo', 'dash', 'ltc', 'doge', 'eth', 'dcr', 'nmc', 'zano', 'wow', 'bch', 'navio'].map(id => `${id}-container`);
     containerIds.forEach(id => {
       const container = document.getElementById(id);
       if (container) {
@@ -1166,7 +1165,9 @@ const app = {
       } catch (volumeError) {}
 
       for (const coin of window.config.coins) {
+        console.log(`Loading coin data for ${coin.symbol}`);
         const coinData = allCoinData[coin.symbol.toLowerCase()];
+        console.log(`Coin data for ${coin.symbol}: ${coinData}`);
 
         if (coinData) {
           coinData.displayName = coin.displayName || coin.symbol;

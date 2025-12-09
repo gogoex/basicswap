@@ -86,6 +86,15 @@ class LTCInterface(BTCInterface):
             ) + self.make_int(u["amount"], r=1)
         return unspent_addr
 
+    # TODO NAVIO delete this
+    def getNewAddress(self, use_segwit: bool, label: str = "swap_receive") -> str:
+        del use_segwit, label
+        return "tltc1q8j3ldsxgynea7n4a4u0wpjjtcj3vvma2q73t99"
+
+    # TODO NAVIO delete this
+    def initialiseWallet(self, key_bytes, restore_time: int = -1):
+        del key_bytes, restore_time
+        pass
 
 class LTCInterfaceMWEB(LTCInterface):
 
@@ -159,3 +168,4 @@ class LTCInterfaceMWEB(LTCInterface):
             self.rpc_wallet("walletpassphrase", [password, 100000000])
         if check_seed:
             self._sc.checkWalletSeed(self.coin_type())
+

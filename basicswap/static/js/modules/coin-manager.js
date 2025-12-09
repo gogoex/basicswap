@@ -145,6 +145,18 @@ const CoinManager = (function() {
             usesCoinGecko: true,
             historicalDays: 30,
             icon: 'Wownero.png'
+        },
+        {
+            symbol: 'NAVIO',
+            name: 'navio',
+            displayName: 'navio',
+            aliases: ['nav', 'navio'],
+            coingeckoId: 'nav-coin',
+            cryptocompareId: 'NAVIO',
+            usesCryptoCompare: false,
+            usesCoinGecko: true,
+            historicalDays: 30,
+            icon: 'Navio.png'
         }
     ];
     const symbolToInfo = {};
