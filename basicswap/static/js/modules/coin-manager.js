@@ -149,7 +149,7 @@ const CoinManager = (function() {
         {
             symbol: 'NAV',
             name: 'navio',
-            displayName: 'navio',
+            displayName: 'Navio',
             aliases: ['nav', 'navio'],
             coingeckoId: 'nav-coin',
             cryptocompareId: 'NAV',
