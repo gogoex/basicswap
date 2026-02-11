@@ -26,5 +26,6 @@ class OpCodes(IntEnum):
     OP_CHECKSIG = (0xAC,)
     OP_CHECKLOCKTIMEVERIFY = (0xB1,)
     OP_CHECKSEQUENCEVERIFY = (0xB2,)
+    OP_BLSCHECKSIG = (0xB3,)
 
     OP_SHA256_DECRED = (0xC0,)

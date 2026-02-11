@@ -54,6 +54,8 @@ def page_bid(self, url_split, post_string):
     edit_bid = False
     view_tx_ind = None
     form_data = self.checkForm(post_string, "bid", err_messages)
+    swap_client.log.info(f"In page_bid. form_data: {form_data}")
+
     if form_data:
         if b"abandon_bid" in form_data:
             try:
@@ -63,9 +65,11 @@ def page_bid(self, url_split, post_string):
                 err_messages.append("Abandon failed " + str(ex))
         elif b"accept_bid" in form_data:
             try:
+                swap_client.log.info("---> Trying to accept bid")
                 swap_client.acceptBid(bid_id)
                 messages.append("Bid accepted")
             except Exception as ex:
+                swap_client.log.info("---> Accept bid failed: {}".format(str(ex)))
                 err_messages.append("Accept failed " + str(ex))
         elif b"show_txns" in form_data:
             show_txns = True

@@ -394,6 +394,7 @@ def js_offers(self, url_split, post_string, is_json, sent=False) -> bytes:
     offers = swap_client.listOffers(sent, filters)
     rv = []
     for o in offers:
+        swap_client.log.info(f"---> js_offers: offer={vars(o)}")
         ci_from = swap_client.ci(o.coin_from)
         ci_to = swap_client.ci(o.coin_to)
         offer_data = {
@@ -591,6 +592,7 @@ def js_bids(self, url_split, post_string: str, is_json: bool) -> bytes:
                     extra_options=extra_options,
                 )
             else:
+
                 bid_id = swap_client.postBid(
                     offer_id,
                     amount_from,

@@ -1986,7 +1986,7 @@ class BTCInterface(Secp256k1Interface):
 
     def createRawSignedTransaction(self, addr_to, amount) -> str:
         txn_funded = self.createRawFundedTransaction(addr_to, amount)
-        return self.rpc_wallet("signrawtransactionwithwallet", [txn_funded])["hex"]
+        return self.rpc_wallet("signblsctrawtransaction", [txn_funded])["hex"]
 
     def getBlockWithTxns(self, block_hash: str):
         return self.rpc("getblock", [block_hash, 2])

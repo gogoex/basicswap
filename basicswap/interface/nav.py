@@ -9,6 +9,17 @@ from basicswap.interface.btc import (
     BTCInterface,
 )
 from basicswap.chainparams import Coins
+from typing import Optional, Any
+from typing import NamedTuple
+
+class PrevOutInfo(NamedTuple):
+    txid: str
+    vout: int
+    amount: int
+
+class VOut(NamedTuple):
+    index: int
+    amount: int
 
 class NAVInterface(BTCInterface):
     @staticmethod
@@ -17,6 +28,134 @@ class NAVInterface(BTCInterface):
 
     def __init__(self, coin_settings, network, swap_client=None):
         super(NAVInterface, self).__init__(coin_settings, network, swap_client)
+
+    def checkExpectedSeed(self, expect_seedid: str) -> bool:
+        actual_seedid = self.getWalletSeedID()
+        return expect_seedid == actual_seedid
+
+    def _createRawFundedTransaction(
+        self,
+        addr_to: str,
+        amount: int,
+        script: Optional[bytearray] = None,
+        sub_fee: bool = False,
+        lock_unspents: bool = True,
+    ) -> str:
+        del sub_fee
+        del lock_unspents
+
+        param: dict[str, Any] = {
+            "address": addr_to,
+            "amount": self.format_amount(amount),
+        }
+
+        self._log.info(f"---> in _createRawRundedTransaciton: {script=}")
+        if script is not None:
+            param["script"] = bytes(script).hex()
+            self._log.info(f"---> Added script")
+        params = [param]
+
+        txn = self.rpc("createblsctrawtransaction", [[], params])
+        self._log.info(f"---> Created raw transaction with {params=}")
+
+        txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn])
+        self._log.info(f"---> Created raw funded transaction")
+        return txn_funded
+
+    def createRawFundedTransaction(
+        self,
+        addr_to: str,
+        amount: int,
+        sub_fee: bool = False,
+        lock_unspents: bool = True,
+    ) -> str:
+        return self._createRawFundedTransaction(
+            addr_to,
+            amount,
+            None,
+            sub_fee,
+            lock_unspents)
+
+    def createRawSignedTransaction(self, addr_to, amount) -> str:
+        txn_funded = self._createRawFundedTransaction(addr_to, amount)
+        return self.rpc_wallet("signblsctrawtransaction", [txn_funded])
+
+    def createInitiateTxn(
+        self,
+        address_a: str,
+        address_b: str,
+        hash: bytes,
+        locktime: int,
+        blinding_key: int,
+        amount: int,
+    ) -> tuple[str, int]:
+        self._log.info(f"---> createNavioRawRundedTransaciton")
+        param: dict[str, Any] = {
+            "amount": self.format_amount(amount),
+            "address_a": address_a,
+            "address_b": address_b,
+            "blinding_key": f"{blinding_key:064x}",
+            "hash": hash.hex(),
+            "locktime": locktime,
+            "type": "atomic_swap",
+        }
+        params = [param]
+        txn = self.rpc("createblsctrawtransaction", [[], params])
+        txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn])
+        txjs = self.rpc_wallet("decodeblsctrawtransaction", [txn_funded])
+
+        vout_index = None
+        for index, output in enumerate(txjs["outputs"]):
+            if self.isHTLCScript(output["scriptPubKey"]):
+                vout_index = index
+                break
+        if vout_index is None:
+            raise ValueError(f"Failed to find vout with HTLC script")
+            
+        return txn_funded, vout_index
+
+    def describeTx(self, tx_hex: str):
+        # tx_hex is expected to be sigined
+        # for txs before signing, use decodeblsctrawtransaction
+        return self.rpc("decoderawtransaction", [tx_hex])
+
+    # used to generate mock address
+    # TODO NAVIO generate address based on script_dest
+    def encodeScriptDest(self, script: bytes) -> str:
+        del script
+        return "tnv14adxpa06t5fywwtte3g223ef92plxqm7ls2jxqp5rwef2cz7ppdhx36ck0e42x2dkj92vw3kxfj90zpzy8ymnmqd9x9gc5wq2xv6m5rkxcxz39jpvaan4dw254ayl94h5tuy5pftaczhcrr5exz9ke0cdgr75y6ft5"
+
+    def find_prevout_info(self, txn_hex: str, txn_script: bytes):
+        del txn_script
+        txjs = self.rpc("decoderawtransaction", [txn_hex])
+
+        return {
+            "txid": txjs["txid"],
+            "vout": 0,
+        }
+
+    def find_htlc_vouts(txjs: dict) -> list[VOut]:
+        res = []
+        for txjs in txjs["outputs"]:
+            pass
+
+        return res
+
+    def getPrevOutInfo(self, txn_hex: str) -> PrevOutInfo:
+        txjs = self.rpc("decodeblsctrawtransaction", [txn_hex])
+        self._log.info(f"---> {txjs=}")
+
+        txid = txjs["txid"]
+        rec_data = self.rpc("getblsctrecoverydata", [txid])
+        self._log.info(f"---> recovered: {rec_data=}")
+
+        raise ValueError("----------------> HERE!!!")
+
+        return PrevOutInfo(
+            txid = txid,
+            vout = 0,
+            amount = 10000,
+        )
 
     def initialiseWallet(self, key_bytes, restore_time: int = -1):
         del restore_time
@@ -28,6 +167,18 @@ class NAVInterface(BTCInterface):
         except Exception as e:
             self._log.debug(f"setblsctseed failed: {e}")
             raise (e)
+
+    def getNewAddress(self, use_segwit: bool, label: str = "swap_receive") -> str:
+        del use_segwit
+        return "tnv14adxpa06t5fywwtte3g223ef92plxqm7ls2jxqp5rwef2cz7ppdhx36ck0e42x2dkj92vw3kxfj90zpzy8ymnmqd9x9gc5wq2xv6m5rkxcxz39jpvaan4dw254ayl94h5tuy5pftaczhcrr5exz9ke0cdgr75y6ft5"
+        # address: str = self.rpc(
+        #     "getnewaddress",
+        #     [
+        #         label,
+        #         "blsct",
+        #     ],
+        # )
+        # return address
 
     def getSeedHash(self, seed: bytes) -> bytes:
         del seed
@@ -42,19 +193,84 @@ class NAVInterface(BTCInterface):
         wi = self.rpc_wallet("getwalletinfo")
         return wi["hdseedid"]
 
-    def checkExpectedSeed(self, expect_seedid: str) -> bool:
-        actual_seedid = self.getWalletSeedID()
-        return expect_seedid == actual_seedid
+    def getSpendingPubKey(self) -> bytes:
+        return bytes(96)
 
-    def getNewAddress(self, use_segwit: bool, label: str = "swap_receive") -> str:
-        del use_segwit
-        return "tnv14adxpa06t5fywwtte3g223ef92plxqm7ls2jxqp5rwef2cz7ppdhx36ck0e42x2dkj92vw3kxfj90zpzy8ymnmqd9x9gc5wq2xv6m5rkxcxz39jpvaan4dw254ayl94h5tuy5pftaczhcrr5exz9ke0cdgr75y6ft5"
-        # address: str = self.rpc(
-        #     "getnewaddress",
-        #     [
-        #         label,
-        #         "blsct",
-        #     ],
-        # )
-        # return address
+    def isHTLCScript(self, script: str) -> bool:
+        """
+        Determines if a script is a Navio HTLC script.
+        
+        >>> nav = NAVInterface()
+        >>> hex = "6382012088a820b812e53d1bd15a928803df44ab86c6a286d9a3d6625a3738f"
+        >>> hex += "bed32d89a4c7c178830a7b9a59a0e305eef4f756909e6fa107091fc6d2b2743"
+        >>> hex += "3d110d5d3c95ff987a0182bbd2e19897ee71af0466006cc2755467042c688b6"
+        >>> hex += "9b17530a7b9a59a0e305eef4f756909e6fa107091fc6d2b27433d110d5d3c95"
+        >>> hex += "ff987a0182bbd2e19897ee71af0466006cc2755468b3"
+        >>> nav.isHTLCScript(hex)
+        True
+        >>> nav.isHTLCScript("76a91488ac")
+        False
+        """
+        script = script.lower()
+        pos = 0
+
+        def consume(exp: str) -> bool:
+            nonlocal pos
+            if pos + len(exp) > len(script):
+                return False
+            if script[pos:pos + len(exp)] == exp:
+                pos += len(exp)
+                return True
+            else:
+                return False
+
+        def skip(n: int) -> bool:
+            nonlocal pos
+            pos = pos + n*2
+            return pos <= len(script)
+        
+        return (
+            # valid script is 296-char long
+            len(script) == 296 and
+            # 63 (OP_IF)
+            # 82 (OP_SIZE)
+            # 01 20 (32 bytes)
+            # 88 (OP_EQUALVERIFY)
+            # a8 (OP_SHA256)
+            # 20 (Data Length 32)
+            consume("6382012088a820") and 
+            # secret hash
+            skip(32) and
+            # 88 (OP_EQUALVERIFY)
+            # 30 (Data Length 48)
+            consume("8830") and 
+            # address_a
+            skip(48) and
+            # 67 (OP_ELSE)
+            # 04 (Data Length 4)
+            consume("6704") and 
+            # locktime
+            skip(4) and
+            # b1 (OP_CHECKLOCKTIMEVERIFY)
+            # 75 (OP_DROP)
+            # 30 (Data Length 48)
+            consume("b17530") and 
+            # address_b
+            skip(48) and
+            # 68 (OP_ENDIF)
+            # b3 (OP_BLSCHECKSIG)
+            consume("68b3") 
+        )
+
+
+
+
+
+
+
+
+
+
+
+
 

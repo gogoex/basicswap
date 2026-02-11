@@ -120,6 +120,7 @@ def parseOfferFormData(swap_client, form_data, page_data, options={}):
             if options.get("add_min_bid_amt", False) is True:
                 parsed_data["amt_bid_min"] = ci_from.chainparams_network()["min_amount"]
             else:
+                swap_client.log.info("add_min_bid_amt is missing")
                 raise ValueError("missing")
         else:
             page_data["amt_bid_min"] = get_data_entry(form_data, "amt_bid_min")
@@ -418,6 +419,7 @@ def offer_to_post_string(self, swap_client, offer_id):
     ci_from = swap_client.ci(offer.coin_from)
     ci_to = swap_client.ci(offer.coin_to)
 
+    swap_client.log.info(f"---> offer_to_post_string: {offer=}") 
     amount_to: int = offer.amount_to
     if amount_to is None:
         amount_to = (offer.amount_from * offer.rate) // ci_from.COIN()
@@ -632,6 +634,7 @@ def page_offer(self, url_split, post_string):
             and b"formid" in form_data
         ):
             try:
+                self.server.swap_client.log.info(f"--> form_data: {form_data}") 
                 addr_from = form_data[b"addr_from"][0].decode("utf-8")
                 extend_data["nb_addr_from"] = addr_from
                 if addr_from == "-1":
@@ -875,6 +878,7 @@ def page_offers(self, url_split, post_string, sent=False):
     filter_prefix = "page_offers_sent" if sent else "page_offers"
     messages = []
     form_data = self.checkForm(post_string, "offers", messages)
+    swap_client.log.info(f"---> page_offers: {form_data=}")
     if form_data:
         if have_data_entry(form_data, "clearfilters"):
             swap_client.clearFilters(filter_prefix)
@@ -976,6 +980,7 @@ def page_offers(self, url_split, post_string, sent=False):
         swap_client.settings, "coingecko_api_key", default_coingecko_api_key
     )
 
+    swap_client.log.info(f"---> page_offers: {formatted_offers=}")
     offers_count = len(formatted_offers)
 
     enabled_chart_coins = []
