@@ -2407,7 +2407,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         except Exception:
             raise ValueError("Unknown coin to type")
 
-        self.log.info("---> 1")
         self.validateSwapType(coin_from_t, coin_to_t, swap_type)
         self.validateOfferLockValue(
             swap_type, coin_from_t, coin_to_t, lock_type, lock_value
@@ -3891,12 +3890,15 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 )
                 self.log.info(f"---> prefunded tx: {prefunded_tx}")
 
+                nav_addr_redeem = None
+                nav_addr_refund = None
+
                 if coin_from == Coins.NAV:
                     bid_id = bid.bid_id
-                    addr_redeem = self.getReceiveAddressFromPool(
+                    nav_addr_redeem = self.getReceiveAddressFromPool(
                         coin_from, bid_id, TxTypes.ITX_REDEEM, use_cursor
                     )
-                    addr_refund = self.getReceiveAddressFromPool(
+                    nav_addr_refund = self.getReceiveAddressFromPool(
                         coin_from, bid_id, TxTypes.ITX_REFUND, use_cursor
                     )
                     blinding_key = secrets.randbits(256)
@@ -3904,8 +3906,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     lock_value = self.getLockValue(ci_from, offer)
 
                     txn, lock_tx_vout = ci_from.createInitiateTxn(
-                        addr_redeem,
-                        addr_refund,
+                        nav_addr_redeem,
+                        nav_addr_refund,
                         secret_hash, # OK
                         lock_value, # OK
                         blinding_key,
@@ -3915,15 +3917,27 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     txn, lock_tx_vout = self.createInitiateTxn(
                         coin_from, bid_id, bid, script, prefunded_tx
                     )
-                self.log.info(f"---> created initiate txn")
+                self.log.info(f"---> created initiate txn: {txn=}")
 
                 # Store the signed refund txn in case wallet is locked when refund is possible
-                refund_txn = self.createRefundTxn(
-                    coin_from, txn, offer, bid, script, cursor=use_cursor
-                )
+
+                if coin_from == Coins.NAV:
+                    # txn is a funded transaction, but not signed
+                    refund_txn = self.createRefundTxn(
+                        coin_from, txn, offer, bid, script,
+                        addr_refund_out=nav_addr_refund, cursor=use_cursor
+                    )
+                    self.log.info(f"---> refund_txn is: {refund_txn}")
+                else:
+                    refund_txn = self.createRefundTxn(
+                        coin_from, txn, offer, bid, script, cursor=use_cursor
+                    )
                 self.log.info(f"---> created refund txn")
 
                 bid.initiate_txn_refund = bytes.fromhex(refund_txn)
+
+                if coin_from == Coins.NAV:
+                    txn = ci_from.signBlsct(txn)
 
                 txid = ci_from.publishTx(bytes.fromhex(txn))
                 self.log.info(f"---> published initiate txn w/ {txid=}")
@@ -5441,12 +5455,15 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         if self.coin_clients[coin_type]["connection_type"] != "rpc":
             return None
 
+        # get prevout (=tx w/ HTLC script) info
         ci = self.ci(coin_type)
         if coin_type in (Coins.DCR,):
             prevout = ci.find_prevout_info(txn, txn_script)
         elif coin_type == Coins.NAV:
-            amount, vout, txid = ci.getPrevOutInfo(txn)
-            self.log.info("---> got NAV prevout info {amount=}, {vout=}, {txid=}")
+            self.log.debug(f"---> getting prev out info: {txn=}")
+            # txn is a funded transaciton
+            prevout = ci.getPrevOutInfo(txn)
+            self.log.info(f"---> got NAV {prevout=}")
         else:
             # TODO: Sign in bsx for all coins
             txjs = self.callcoinrpc(Coins.PART, "decoderawtransaction", [txn])
@@ -5465,59 +5482,77 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 "amount": txjs["vout"][vout]["value"],
             }
 
-        bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
-        self.log.info(f"---> bid_data: {bid_date}")
+        # get public/private keys associated with the HTLC tx
+        if coin_type == Coins.NAV:
+            privkey = None
+            pubkey = None
+            lock_value = 0
+            sequence = 0
+        else:
+            bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
 
-        privkey = self.getContractPrivkey(bid_date, bid.contract_count)
-        self.log.info(f"---> priv_key: {privkey}")
-        pubkey = ci.getPubkey(privkey)
-        self.log.info(f"---> pubkey: {pubkey}")
+            privkey = self.getContractPrivkey(bid_date, bid.contract_count)
+            pubkey = ci.getPubkey(privkey)
 
-        lock_value = DeserialiseNum(txn_script, 64)
-        self.log.info(f"---> lock_value: {lock_value}")
-        sequence: int = 1
-        if offer.lock_type < TxLockTypes.ABS_LOCK_BLOCKS:
-            sequence = lock_value
+            # extract locktime
+            lock_value = DeserialiseNum(txn_script, 64)
+            self.log.info(f"---> lock_value: {lock_value}")
+            sequence: int = 1
+            if offer.lock_type < TxLockTypes.ABS_LOCK_BLOCKS:
+                sequence = lock_value
 
+        # get fee rate for the coin
         fee_rate, fee_src = self.getFeeRateForCoin(coin_type)
         self.log.info(f"---> fee_rate: {fee_rate}")
 
+        # calculate estimated fee
         tx_vsize = ci.getHTLCSpendTxVSize(False)
-        self.log.info(f"---> tx_vsize: {tx_vsize}")
         tx_fee = (fee_rate * tx_vsize) / 1000
+        self.log.info(f"---> tx_vsize: {tx_vsize}")
 
         self.log.debug(
             f"---> Refund tx fee {ci.format_amount(tx_fee, conv_int=True, r=1)}, rate {fee_rate}"
         )
 
+        # get refund amount
         amount_out = ci.make_int(prevout["amount"], r=1) - ci.make_int(tx_fee, r=1)
         if amount_out <= 0:
             raise ValueError("Refund amount out <= 0")
+        self.log.info(f"---> {amount_out=}")
 
+        # get refund address if not given
         if addr_refund_out is None:
             addr_refund_out = self.getReceiveAddressFromPool(
                 coin_type, bid.bid_id, tx_type, cursor
             )
+        self.log.info(f"---> {addr_refund_out=}")
         ensure(addr_refund_out is not None, "addr_refund_out is null")
         self.log.debug(f"addr_refund_out {addr_refund_out}")
 
+        # finalize locktime
         locktime: int = 0
         if (
             offer.lock_type == TxLockTypes.ABS_LOCK_BLOCKS
             or offer.lock_type == TxLockTypes.ABS_LOCK_TIME
         ):
             locktime = lock_value
+        self.log.info(f"---> {locktime=}")
 
+        # build refund tx
         refund_txn = ci.createRefundTxn(
             prevout, addr_refund_out, amount_out, locktime, sequence, txn_script
         )
+        self.log.info(f"---> {refund_txn=}")
 
+        # generate refund_sig
         options = {}
         if self.coin_clients[coin_type]["use_segwit"]:
             options["force_segwit"] = True
-        if coin_type in (Coins.NAV, Coins.DCR):
+        if coin_type in (Coins.DCR,):
             privkey_wif = ci.encodeKey(privkey)
             refund_sig = ci.getTxSignature(refund_txn, prevout, privkey_wif)
+        elif coin_type == Coins.NAV:
+            refund_sig = None
         else:
             privkey_wif = self.ci(Coins.PART).encodeKey(privkey)
             refund_sig = self.callcoinrpc(
@@ -5525,6 +5560,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 "createsignaturewithkey",
                 [refund_txn, prevout, privkey_wif, "ALL", options],
             )
+        self.log.info(f"---> {refund_sig=}")
+
+        # assemble refund tx
         if (
             coin_type in (Coins.PART, Coins.DCR)
             or self.coin_clients[coin_type]["use_segwit"]
@@ -5533,6 +5571,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             refund_txn = ci.setTxSignature(
                 bytes.fromhex(refund_txn), witness_stack
             ).hex()
+        elif coin_type == Coins.NAV:
+            refund_txn = ci.signBlsct(refund_txn)
         else:
             script = (len(refund_sig) // 2).to_bytes(1, "big") + bytes.fromhex(
                 refund_sig
@@ -5546,9 +5586,12 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             )
             refund_txn = ci.setTxScriptSig(bytes.fromhex(refund_txn), 0, script).hex()
 
-        if coin_type in (Coins.NAV, Coins.DCR):
-            # Only checks signature
+        # check if refund_txn is valid
+        if coin_type in (Coins.DCR, Coins.NAV):
+            self.log.info(f"---> verifying txn...")
+            # DCR only checks signature
             ro = ci.verifyRawTransaction(refund_txn, [prevout])
+            self.log.info(f"---> verification result {ro=}")
         else:
             ro = self.callcoinrpc(
                 Coins.PART, "verifyrawtransaction", [refund_txn, [prevout]]
@@ -5569,26 +5612,45 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                         refund_txn,
                     ],
                 )
+                self.log.info(f"---> self.debug {refund_txjs=}")
+
                 if coin_type in (Coins.DCR,):
                     txsize = len(refund_txn) // 2
                     self.log.debug(f"size paid, actual size {tx_vsize} {txsize}")
                     ensure(tx_vsize >= txsize, "underpaid fee")
                 elif ci.use_tx_vsize():
+                    self.log.info(f"---> self.debug use_tx_vsize")
                     self.log.debug(
                         "vsize paid, actual vsize %d %d", tx_vsize, refund_txjs["vsize"]
                     )
                     ensure(tx_vsize >= refund_txjs["vsize"], "underpaid fee")
                 else:
+                    self.log.info(f"---> self.debug else")
                     self.log.debug(
                         "size paid, actual size %d %d", tx_vsize, refund_txjs["size"]
                     )
                     ensure(tx_vsize >= refund_txjs["size"], "underpaid fee")
 
-            refund_txid = ci.getTxid(bytes.fromhex(refund_txn))
-            prev_txid = ci.getTxid(bytes.fromhex(txn))
-            self.log.debug(
-                f"Have valid refund tx {self.log.id(refund_txid)} for contract tx {self.log.id(prev_txid)}",
-            )
+                if coin_type == Coins.NAV:
+                    refund_txid = refund_txjs["txid"]
+                    txjs = self.callcoinrpc(
+                        coin_type,
+                        "decoderawtransaction",
+                        [
+                            refund_txn,
+                        ],
+                    )
+                    prev_txid = txjs["txid"]
+                    self.log.debug(
+                        f"Have valid refund tx {self.log.id(refund_txid)} for contract tx {self.log.id(prev_txid)}",
+                    )
+
+            if coin_type != Coins.NAV:
+                refund_txid = ci.getTxid(bytes.fromhex(refund_txn))
+                prev_txid = ci.getTxid(bytes.fromhex(txn))
+                self.log.debug(
+                    f"Have valid refund tx {self.log.id(refund_txid)} for contract tx {self.log.id(prev_txid)}",
+                )
 
         return refund_txn
 

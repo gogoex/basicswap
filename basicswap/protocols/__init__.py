@@ -4,6 +4,7 @@
 # Distributed under the MIT software license, see the accompanying
 # file LICENSE or http://www.opensource.org/licenses/mit-license.php.
 
+from basicswap.chainparams import Coins
 from basicswap.script import (
     OpCodes,
 )
@@ -30,6 +31,9 @@ class ProtocolInterface:
         )
 
     def getMockAddrTo(self, ci):
+        if ci.coin_type() == Coins.NAV:
+            return ci.getNewAddress(ci.using_segwit())
+
         script = self.getMockScript()
         return (
             ci.encodeScriptDest(ci.getScriptDest(script))

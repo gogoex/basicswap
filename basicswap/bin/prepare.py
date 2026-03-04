@@ -88,7 +88,7 @@ DASH_VERSION_TAG = os.getenv("DASH_VERSION_TAG", "")
 FIRO_VERSION = os.getenv("FIRO_VERSION", "0.14.15.0")
 FIRO_VERSION_TAG = os.getenv("FIRO_VERSION_TAG", "")
 
-NAVIO_VERSION = os.getenv("NAVIO_VERSION", "0.1.0-rc4")
+NAVIO_VERSION = os.getenv("NAVIO_VERSION", "0.1.0-rc10")
 NAVIO_VERSION_TAG = os.getenv("NAVIO_VERSION_TAG", "")
 
 BITCOINCASH_VERSION = os.getenv("BITCOINCASH_VERSION", "28.0.1")
@@ -2766,7 +2766,7 @@ def main():
             "onionport": NAV_ONION_PORT + port_offset,
             "datadir": os.getenv("NAV_DATA_DIR", os.path.join(data_dir, "navio")),
             "bindir": os.path.join(bin_dir, "navio"),
-            "use_segwit": True,
+            "use_segwit": False,
             "use_csv": True,
             "blocks_confirmed": 1,
             "conf_target": 2,

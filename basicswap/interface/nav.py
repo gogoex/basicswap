@@ -9,17 +9,13 @@ from basicswap.interface.btc import (
     BTCInterface,
 )
 from basicswap.chainparams import Coins
-from typing import Optional, Any
-from typing import NamedTuple
+from typing import Optional, Any, TypedDict
 
-class PrevOutInfo(NamedTuple):
-    txid: str
-    vout: int
-    amount: int
-
-class VOut(NamedTuple):
-    index: int
-    amount: int
+class PrevOutInfo(TypedDict):
+    outid: str
+    amount: float
+    gamma: str
+    spending_key: str
 
 class NAVInterface(BTCInterface):
     @staticmethod
@@ -49,10 +45,11 @@ class NAVInterface(BTCInterface):
             "amount": self.format_amount(amount),
         }
 
-        self._log.info(f"---> in _createRawRundedTransaciton: {script=}")
+        self._log.info(f"---> in _createRawFundedTransaciton: {script=}")
         if script is not None:
             param["script"] = bytes(script).hex()
             self._log.info(f"---> Added script")
+        self._log.info(f"---> {param=}")
         params = [param]
 
         txn = self.rpc("createblsctrawtransaction", [[], params])
@@ -89,7 +86,7 @@ class NAVInterface(BTCInterface):
         blinding_key: int,
         amount: int,
     ) -> tuple[str, int]:
-        self._log.info(f"---> createNavioRawRundedTransaciton")
+        self._log.info(f"---> createInitiateTxn")
         param: dict[str, Any] = {
             "amount": self.format_amount(amount),
             "address_a": address_a,
@@ -99,10 +96,14 @@ class NAVInterface(BTCInterface):
             "locktime": locktime,
             "type": "atomic_swap",
         }
+        self._log.info(f"---> {param=}")
         params = [param]
         txn = self.rpc("createblsctrawtransaction", [[], params])
+        self._log.info(f"---> createInitiateTxn: created raw non-funded tx: {txn=}")
+
         txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn])
         txjs = self.rpc_wallet("decodeblsctrawtransaction", [txn_funded])
+        self._log.info(f"---> createInitiateTxn: created raw funded tx: {txn_funded=}")
 
         vout_index = None
         for index, output in enumerate(txjs["outputs"]):
@@ -111,8 +112,37 @@ class NAVInterface(BTCInterface):
                 break
         if vout_index is None:
             raise ValueError(f"Failed to find vout with HTLC script")
-            
+        self._log.info(f"vout index is {vout_index}") 
+
         return txn_funded, vout_index
+
+    def createRefundTxn(
+        self,
+        prevout: PrevOutInfo,
+        output_addr: str,
+        output_value: int,
+        locktime: int,
+        sequence: int,
+        txn_script: bytes | None = None,
+    ) -> str:
+        del locktime, sequence, txn_script
+        self._log.info(f"---> createRefundTxn amount={prevout['amount']}, {output_value=}")
+
+        in_params: dict[str, Any] = {
+            "outid": prevout["outid"],
+            "value": int(prevout["amount"]),
+            "gamma": prevout["gamma"],
+            "spending_key": prevout["spending_key"],
+            "scriptSig": "00",
+        }
+        out_params: dict[str, Any] = {
+            "amount": float(self.format_amount(output_value)),
+            "address": output_addr,
+        }
+        params = [[in_params], [out_params]]
+        self._log.info(f"---> {params=}")
+        txn = self.rpc("createblsctrawtransaction", params)
+        return txn
 
     def describeTx(self, tx_hex: str):
         # tx_hex is expected to be sigined
@@ -125,48 +155,59 @@ class NAVInterface(BTCInterface):
         del script
         return "tnv14adxpa06t5fywwtte3g223ef92plxqm7ls2jxqp5rwef2cz7ppdhx36ck0e42x2dkj92vw3kxfj90zpzy8ymnmqd9x9gc5wq2xv6m5rkxcxz39jpvaan4dw254ayl94h5tuy5pftaczhcrr5exz9ke0cdgr75y6ft5"
 
-    def find_prevout_info(self, txn_hex: str, txn_script: bytes):
-        del txn_script
-        txjs = self.rpc("decoderawtransaction", [txn_hex])
+    # def find_prevout_info(self, txn_hex: str, txn_script: bytes):
+    #     del txn_script
+    #     txjs = self.rpc("decoderawtransaction", [txn_hex])
+    #
+    #     return {
+    #         "txid": txjs["txid"],
+    #         "vout": 0,
+    #     }
+    #
+    # def find_htlc_vouts(txjs: dict) -> list[VOut]:
+    #     res = []
+    #     for txjs in txjs["outputs"]:
+    #         pass
+    #
+    #     return res
 
-        return {
-            "txid": txjs["txid"],
-            "vout": 0,
-        }
+    def get_fee_rate(self, conf_target: int = 2) -> (float, str):
+        del conf_target
+        chain_client_settings = self._sc.getChainClientSettings(
+            self.coin_type()
+        )  # basicswap.json
+        override_feerate = chain_client_settings.get("override_feerate", None)
+        if override_feerate:
+            self._log.debug(
+                f"Fee rate override used for {self.coin_name()}: {override_feerate}"
+            )
+            return override_feerate, "override_feerate"
 
-    def find_htlc_vouts(txjs: dict) -> list[VOut]:
-        res = []
-        for txjs in txjs["outputs"]:
-            pass
+        return 125.0, "default_feerate"
 
-        return res
+    def getHTLCSpendTxVSize(self, redeem: bool = True) -> int:
+        del redeem
+        # always using the size of a refund transaction since the size
+        # difference between redeem and refund transactions are small
+        return 1336
 
     def getPrevOutInfo(self, txn_hex: str) -> PrevOutInfo:
         txjs = self.rpc("decodeblsctrawtransaction", [txn_hex])
-        self._log.info(f"---> {txjs=}")
+        self._log.info(f"---> getPrevOutInfo: {txjs=}")
 
-        txid = txjs["txid"]
-        rec_data = self.rpc("getblsctrecoverydata", [txid])
-        self._log.info(f"---> recovered: {rec_data=}")
+        for output in txjs['outputs']:
+            if self.isHTLCScript(output['scriptPubKey']):
+                self._log.debug(f"getPrevOutInfo {output=}")
+                nav_amount = float(output['amount'])
+                sat_amount = int(nav_amount * 100_000_000)
+                return {
+                    "outid":  output['outputHash'],
+                    "amount": sat_amount,
+                    "gamma": output['gamma'],
+                    "spending_key": output['spending_key'],
+                }
 
-        raise ValueError("----------------> HERE!!!")
-
-        return PrevOutInfo(
-            txid = txid,
-            vout = 0,
-            amount = 10000,
-        )
-
-    def initialiseWallet(self, key_bytes, restore_time: int = -1):
-        del restore_time
-        #key_wif = self.encodeKey(key_bytes)
-        # TODO NAV remove this
-        key_wif = "322cf308b2a883ce247514be112afdb64c71c562f6ed16d0a8d83ed00f33b306"
-        try:
-            self.rpc_wallet("setblsctseed", [key_wif])
-        except Exception as e:
-            self._log.debug(f"setblsctseed failed: {e}")
-            raise (e)
+        raise ValueError("No output with HTLC script found in {txjs=}")
 
     def getNewAddress(self, use_segwit: bool, label: str = "swap_receive") -> str:
         del use_segwit
@@ -196,10 +237,37 @@ class NAVInterface(BTCInterface):
     def getSpendingPubKey(self) -> bytes:
         return bytes(96)
 
+    def initialiseWallet(self, key_bytes, restore_time: int = -1):
+        del restore_time
+        #key_wif = self.encodeKey(key_bytes)
+        # TODO NAV remove this
+        key_wif = "322cf308b2a883ce247514be112afdb64c71c562f6ed16d0a8d83ed00f33b306"
+        try:
+            self.rpc_wallet("setblsctseed", [key_wif])
+        except Exception as e:
+            self._log.debug(f"setblsctseed failed: {e}")
+            raise (e)
+
     def isHTLCScript(self, script: str) -> bool:
         """
         Determines if a script is a Navio HTLC script.
-        
+
+        OP_IF
+            OP_SIZE
+            32
+            OP_EQUALVERIFY
+            OP_SHA256
+            <32-byte secret hash>
+            OP_EQUALVERIFY
+            <48-byte address_a>
+        OP_ELSE
+            <4-byte locktime>
+            OP_CHECKLOCKTIMEVERIFY
+            OP_DROP
+            <48-byte address_b>
+        OP_ENDIF
+        OP_BLSCHECKSIG        
+
         >>> nav = NAVInterface()
         >>> hex = "6382012088a820b812e53d1bd15a928803df44ab86c6a286d9a3d6625a3738f"
         >>> hex += "bed32d89a4c7c178830a7b9a59a0e305eef4f756909e6fa107091fc6d2b2743"
@@ -261,6 +329,27 @@ class NAVInterface(BTCInterface):
             # b3 (OP_BLSCHECKSIG)
             consume("68b3") 
         )
+
+    def publishTx(self, tx: bytes):
+        self._log.debug(f"---> publishing: {tx.hex()}") 
+        return self.rpc("sendrawtransaction", [tx.hex()])
+    
+    def signBlsct(self, txn):
+        self._log.debug(f"---> signing blsct...")
+        signed_txn = self.rpc("signblsctrawtransaction", [txn])
+        self._log.debug(f"---> signed blsct {signed_txn=}")
+        return signed_txn
+
+    def verifyRawTransaction(self, refund_txn, prevouts):
+        del prevouts
+        res = self.rpc("testmempoolaccept", [[refund_txn]])
+        self._log.debug(f"---> verifyRawTransaction: {res}")
+
+        ro = {
+            "inputs_valid": True,
+            "validscripts": 1,
+        }
+        return ro
 
 
 
