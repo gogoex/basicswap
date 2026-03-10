@@ -88,7 +88,7 @@ DASH_VERSION_TAG = os.getenv("DASH_VERSION_TAG", "")
 FIRO_VERSION = os.getenv("FIRO_VERSION", "0.14.15.0")
 FIRO_VERSION_TAG = os.getenv("FIRO_VERSION_TAG", "")
 
-NAVIO_VERSION = os.getenv("NAVIO_VERSION", "0.1.0-rc10")
+NAVIO_VERSION = os.getenv("NAVIO_VERSION", "0.1.0-rc13")
 NAVIO_VERSION_TAG = os.getenv("NAVIO_VERSION_TAG", "")
 
 BITCOINCASH_VERSION = os.getenv("BITCOINCASH_VERSION", "28.0.1")
@@ -2015,22 +2015,21 @@ def initialise_wallets(
                             WALLET_ENCRYPTION_PWD, check_seed=False
                         )
                     elif c in (Coins.NAV,):
-                        swap_client.callcoinrpc(
-                            c,
-                            "createwallet",
-                            [
-                                wallet_name,
-                                False,
-                                True,
-                                WALLET_ENCRYPTION_PWD,
-                                False,
-                                use_descriptors,
-                                True,  # load_on_startup
-                                False, # external_signer
-                                True,  # blsct
-                                False, # storage_output
-                            ],
-                        )
+                        params = [
+                            wallet_name,
+                            False, # disable private keys
+                            True,  # create blank wallet
+                            WALLET_ENCRYPTION_PWD,
+                            False, # avoid reuse
+                            use_descriptors,
+                            True,  # load_on_startup
+                            False, # external_signer
+                            True,  # blsct
+                            False, # storage_output
+                                   # create wallet w/ specified seed
+                        ]
+                        swap_client.callcoinrpc(c, "createwallet", params)
+                        logger.info(f"Created NAV wallet w/ {params=}")
                         swap_client.ci(c).unlockWallet(
                             WALLET_ENCRYPTION_PWD, check_seed=False
                         )

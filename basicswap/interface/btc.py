@@ -409,6 +409,8 @@ class BTCInterface(Secp256k1Interface):
         return f"{purpose}h/{coin_type}h/{account}h"
 
     def initialiseWallet(self, key_bytes: bytes, restore_time: int = -1) -> None:
+        self._log.info(f"---> initialiseWallet: {key_bytes=}, {self._use_descriptors=}")
+
         assert len(key_bytes) == 32
         self._have_checked_seed = False
         if self._use_descriptors:
@@ -450,6 +452,8 @@ class BTCInterface(Secp256k1Interface):
                 raise ValueError("Failed to import descriptors.")
         else:
             key_wif = self.encodeKey(key_bytes)
+            self._log.info(f"---> initialiseWallet: {key_wif=}")
+            
             try:
                 self.rpc_wallet("sethdseed", [True, key_wif])
             except Exception as e:

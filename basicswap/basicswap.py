@@ -5509,13 +5509,19 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         tx_vsize = ci.getHTLCSpendTxVSize(False)
         tx_fee = (fee_rate * tx_vsize) / 1000
         self.log.info(f"---> tx_vsize: {tx_vsize}")
+        self.log.info(f"---> tx_fee: {tx_fee}")
 
         self.log.debug(
             f"---> Refund tx fee {ci.format_amount(tx_fee, conv_int=True, r=1)}, rate {fee_rate}"
         )
 
         # get refund amount
-        amount_out = ci.make_int(prevout["amount"], r=1) - ci.make_int(tx_fee, r=1)
+        self.log.info(f"---> make_int(prevout['amount']): {ci.make_int(prevout['amount'], r=1)}")
+        self.log.info(f"---> make_int(tx_fee): {ci.make_int(tx_fee, r=1)}")
+        if coin_type == Coins.NAV:
+            amount_out = int(prevout["amount"]) - int(tx_fee)
+        else: 
+            amount_out = ci.make_int(prevout["amount"], r=1) - ci.make_int(tx_fee, r=1)
         if amount_out <= 0:
             raise ValueError("Refund amount out <= 0")
         self.log.info(f"---> {amount_out=}")
@@ -5618,6 +5624,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     txsize = len(refund_txn) // 2
                     self.log.debug(f"size paid, actual size {tx_vsize} {txsize}")
                     ensure(tx_vsize >= txsize, "underpaid fee")
+                elif coin_type == Coins.NAV:
+                    pass
                 elif ci.use_tx_vsize():
                     self.log.info(f"---> self.debug use_tx_vsize")
                     self.log.debug(
