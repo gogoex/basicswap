@@ -2569,7 +2569,7 @@ document.addEventListener('DOMContentLoaded', async function() {
 
         if (window.WebSocketManager) {
             WebSocketManager.addMessageHandler('message', async (data) => {
-                if (data.event === 'new_offer' || data.event === 'offer_revoked') {
+                if (data.event === 'new_offer' || data.event === 'offer_revoked' || data.event === 'swap_completed') {
                     try {
                         
                         const fetchWithRetry = async (url, maxRetries = 3) => {
