@@ -333,6 +333,8 @@ class SwapTx(Table):
 
     primary_key = PrimaryKeyConstraint("bid_id", "tx_type")
 
+    tx_data_funded = Column("blob")
+
     def setState(self, new_state):
         if self.state == new_state:
             return

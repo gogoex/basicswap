@@ -10,10 +10,11 @@ from basicswap.interface.btc import (
 )
 from basicswap.chainparams import Coins
 from typing import Optional, Any, TypedDict
+from basicswap.util import SerialiseNum
 
 class PrevOutInfo(TypedDict):
     outid: str
-    amount: float
+    amount: int
     gamma: str
     spending_key: str
 
@@ -115,27 +116,59 @@ class NAVInterface(BTCInterface):
 
         return txn_funded, vout_index
 
+    def createRedeemTxn(
+        self,
+        prevout: PrevOutInfo, # amount is in Navoshis
+        output_addr: str,
+        output_value: int, # in Navoshis
+        txn_script: bytes | None = None,
+    ) -> str:
+        self._log.info(f"---> createReedemTxn amount={prevout['amount']}, {output_value=}, {prevout=}")
+        in_params: dict[str, Any] = {
+            "outid": prevout["outid"],
+            "value": int(prevout["amount"]),
+            "gamma": prevout["gamma"],
+            "spending_key": prevout["spending_key"],
+            "scriptSig": txn_script.hex(),
+        }
+        out_params: dict[str, Any] = {
+            "amount": int(output_value),
+            "address": output_addr,
+        }
+        params = [[in_params], [out_params]]
+        self._log.info(f"---> {params=}")
+        txn = self.rpc("createblsctrawtransaction", params)
+        self._log.info(f"---> Created raw transaction with {txn=}")
+
+        fee = int(prevout["amount"]) - output_value
+        txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn, None, False, fee])
+        self._log.info(f"---> Created raw funded transaction: {txn_funded=}")
+
+        return txn_funded
+
     def createRefundTxn(
         self,
-        prevout: PrevOutInfo,
+        prevout: PrevOutInfo, # amount is in Navoshis
         output_addr: str,
-        output_value: int,
+        output_value: int, # in NAV
         locktime: int,
         sequence: int,
         txn_script: bytes | None = None,
     ) -> str:
-        del locktime, sequence, txn_script
-        self._log.info(f"---> createRefundTxn amount={prevout['amount']}, {output_value=}")
+        del locktime, sequence, txn_script 
+        navoshi_output_value = self.make_int(output_value, r=1)
+        del output_value
+        self._log.info(f"---> createRefundTxn amount={prevout['amount']}, {navoshi_output_value=}")
 
         in_params: dict[str, Any] = {
             "outid": prevout["outid"],
             "value": int(prevout["amount"]),
             "gamma": prevout["gamma"],
             "spending_key": prevout["spending_key"],
-            "scriptSig": "00",
+            "scriptSig": "00", # select else path
         }
         out_params: dict[str, Any] = {
-            "amount": output_value,
+            "amount": navoshi_output_value,
             "address": output_addr,
         }
         params = [[in_params], [out_params]]
@@ -143,7 +176,8 @@ class NAVInterface(BTCInterface):
         txn = self.rpc("createblsctrawtransaction", params)
         self._log.info(f"---> Created raw transaction with {params=}, {txn=}")
 
-        txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn])
+        fee = prevout["amount"] - navoshi_output_value
+        txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn, None, False, fee])
         self._log.info(f"---> Created raw funded transaction: {txn_funded=}")
 
         return txn_funded
@@ -188,9 +222,10 @@ class NAVInterface(BTCInterface):
             return override_feerate, "override_feerate"
 
         # fixed fee in sat/kb
-        sat_per_kb = 125
+        navoshi_per_kb = 125
+        fee_nav = navoshi_per_kb * 1e-8
 
-        return sat_per_kb, "default_feerate"
+        return fee_nav, "default_feerate" 
 
     def getHTLCSpendTxVSize(self, redeem: bool = True) -> int:
         del redeem
@@ -198,14 +233,56 @@ class NAVInterface(BTCInterface):
         # difference between redeem and refund transactions are small
         return 1336
 
+    def getLockTxHeight(
+        self,
+        txid,
+        dest_address,
+        bid_amount,
+        rescan_from,
+        find_index: bool = False,
+        vout: int = -1,
+    ):
+        """BLSCT outputs don't have standard addresses, and tx hashes change
+        after block aggregation.  Search listblsctunspent for the HTLC output
+        matching dest_address (which contains the secret_hash for NAV). """
+        del bid_amount, rescan_from, txid
+        self._log.info(f"---> getLockTxHeight: {dest_address=}")
+        if not dest_address:
+            return None
+
+        # checkBidState is expected to pass the secret hash embedded in the
+        # HTLC script as dest_address 
+        secret_hash = dest_address.lower()
+        try:
+            utxos = self.listBlsctUnspent(min_conf=0)
+            for utxo in utxos:
+                utxo_spk = utxo.get("scriptPubKey", "").lower()
+                if self.isHTLCScript(utxo_spk) and secret_hash in utxo_spk:
+                    confirmations = utxo.get("confirmations", 0)
+                    chain_info = self.rpc("getblockchaininfo")
+                    chain_height = chain_info["blocks"]
+                    block_height = max(0, chain_height - confirmations + 1) if confirmations > 0 else 0
+                    rv = {
+                        "depth": confirmations,
+                        "height": block_height,
+                    }
+                    if find_index:
+                        rv["index"] = vout if vout >= 0 else 0
+                    self._log.debug(f"getLockTxHeight found HTLC via listblsctunspent: {rv}")
+                    return rv
+        except Exception as e:
+            self._log.debug(f"getLockTxHeight listblsctunspent search failed: {e}")
+
+        return None
+
     def getPrevOutInfo(self, txn_hex: str) -> PrevOutInfo:
         txjs = self.rpc("decodeblsctrawtransaction", [txn_hex])
-        self._log.info(f"---> getPrevOutInfo: {txjs=}")
+        self._log.info(f"---> getPrevOutInfo (blsct): {txjs=}")
 
         for output in txjs['outputs']:
             if self.isHTLCScript(output['scriptPubKey']):
                 self._log.debug(f"getPrevOutInfo {output=}")
-                nav_amount = int(output['amount'])
+                nav_amount = int(output['amount_navoshi'])
                 return {
                     "outid":  output['outputHash'],
                     "amount": nav_amount,
@@ -231,6 +308,9 @@ class NAVInterface(BTCInterface):
         seedid_hex = self.getWalletSeedID()
         return bytes.fromhex(seedid_hex)
 
+    def getSpendingPubKey(self) -> bytes:
+        return bytes(96)
+
     def getWalletSeedID(self) -> str:
         """
         The Navio wallet has been initialized using the root key generated by
@@ -238,8 +318,8 @@ class NAVInterface(BTCInterface):
         """
         return self.rpc("getblsctseed")
 
-    def getSpendingPubKey(self) -> bytes:
-        return bytes(96)
+    def importBlsctScript(self, params: dict, rescan: bool = False) -> dict:
+        return self.rpc_wallet("importblsctscript", [params, rescan])
 
     def initialiseWallet(self, key_bytes, restore_time: int = -1):
         del restore_time
@@ -335,19 +415,37 @@ class NAVInterface(BTCInterface):
             consume("68b3") 
         )
 
+    def isTxNonFinalError(self, err_str: str) -> bool:
+        return "bad-inputs-unknown" in err_str or "'code': 25" in err_str
+    
+    def listBlsctUnspent(self, min_conf: int = 1) -> list:
+        return self.rpc_wallet("listblsctunspent", [min_conf])
+
     def publishTx(self, tx: bytes):
         self._log.debug(f"---> publishing: {tx.hex()}") 
-        return self.rpc("sendrawtransaction", [tx.hex()])
+        res = self.rpc("sendrawtransaction", [tx.hex()])
+        self._log.debug(f"---> publishing result: {res}") 
+        return res
     
+    def toFakeHTLCScript(self, secret_hash: bytearray, lock_value: int) -> bytearray:
+        padded_secret_hash = secret_hash.rjust(32, b'\x00')
+        fake_script = (
+            b'\x00' * 7 +
+            padded_secret_hash +
+            b'\x00' * 25 +
+            SerialiseNum(lock_value)
+        )
+        return bytearray(fake_script)
+
     def signBlsct(self, txn):
         self._log.debug(f"---> signing blsct...")
         signed_txn = self.rpc("signblsctrawtransaction", [txn])
         self._log.debug(f"---> signed blsct {signed_txn=}")
         return signed_txn
 
-    def verifyRawTransaction(self, refund_txn, prevouts):
+    def verifyRawTransaction(self, txn, prevouts):
         del prevouts
-        res = self.rpc("testmempoolaccept", [[refund_txn]])
+        res = self.rpc("testmempoolaccept", [[txn]])
         self._log.debug(f"---> verifyRawTransaction: {res}")
 
         ro = {

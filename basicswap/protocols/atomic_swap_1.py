@@ -64,49 +64,6 @@ def buildContractScript(
     return script
 
 
-# OP_IF
-#   OP_SIZE 32 OP_EQUALVERIFY
-#   OP_SHA256 <hash> (hash of alice's secret)
-#   <Alice's spending pubkey (96 bytes)>
-# OP_ELSE
-#   <locktime> OP_CHECKLOCKTIMEVERIFY
-#   OP_DROP
-#   <Bob's spending pubkey (96 bytes)>
-# OP_ENDIF
-# OP_BLSCHECKSIG
-def buildNavioContractScript(
-    lock_val: int,
-    secret_hash: bytes,
-    spk_redeem: bytes, # spending pubkey derived from subaddress
-    spk_refund: bytes, # spending pubkey derived from subaddress
-) -> bytearray:
-    script = (
-        bytearray([OpCodes.OP_IF]) 
-
-        + bytearray(
-            [
-                OpCodes.OP_SIZE,
-                0x01,
-                0x20,  # 32
-                OpCodes.OP_EQUALVERIFY,
-            ]
-        )
-        + bytearray([OpCodes.OP_SHA256, 0x20]) + secret_hash + bytearray([OpCodes.OP_EQUALVERIFY])
-        + bytearray([OpCodes.OP_PUSHDATA1, 96]) + spk_redeem
-
-        + bytearray([OpCodes.OP_ELSE])
-
-        + SerialiseNum(lock_val) + bytearray([OpCodes.OP_CHECKLOCKTIMEVERIFY])
-        + bytearray([OpCodes.OP_DROP])
-        + bytearray([OpCodes.OP_PUSHDATA1, 96]) + spk_refund
-
-        + bytearray([OpCodes.OP_ENDIF])
-
-        + bytearray([OpCodes.OP_BLSCHECKSIG])
-    )
-    return script
-
-
 def verifyContractScript(
     script, op_lock=OpCodes.OP_CHECKSEQUENCEVERIFY, op_hash=OpCodes.OP_SHA256
 ):
