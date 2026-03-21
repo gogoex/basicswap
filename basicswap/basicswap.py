@@ -1923,6 +1923,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 peer_address = offer.addr_from if was_sent else bid.bid_addr
                 self.updateIdentityBidState(use_cursor, peer_address, bid)
 
+            if bid.state == BidStates.SWAP_COMPLETED and offer.active_ind == 1:
+                offer.active_ind = 3
+                self.updateDB(offer, use_cursor, ["offer_id"])
+
         finally:
             if cursor is None:
                 self.closeDB(use_cursor)
