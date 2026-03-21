@@ -162,6 +162,7 @@ class BidMessage(NonProtobufClass):
         9: ("proof_utxos", NPBW_BYTES, 0),
         10: ("pkhash_buyer_to", NPBW_BYTES, 0),
         11: ("message_nets", NPBW_BYTES, NPBF_STR),
+        12: ("buyer_contract_pubkey", NPBW_BYTES, 0),
     }
 
 
@@ -172,6 +173,7 @@ class BidAcceptMessage(NonProtobufClass):
         2: ("initiate_txid", NPBW_BYTES, 0),
         3: ("contract_script", NPBW_BYTES, 0),
         4: ("pkhash_seller", NPBW_BYTES, 0),
+        5: ("seller_contract_pubkey", NPBW_BYTES, 0),
     }
 
 

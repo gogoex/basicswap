@@ -3907,7 +3907,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     )
                     # Derive blinding key via ECDH
                     seller_privkey = self.getContractPrivkey(bid_date, bid.contract_count)
-                    buyer_pubkey = bid.contract_pubkey
+                    buyer_pubkey = bid.buyer_contract_pubkey
                     blinding_key = ci_from.deriveBlindingKey(seller_privkey, buyer_pubkey)
 
                     lock_value = self.getLockValue(ci_from, offer)
@@ -4011,6 +4011,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 # pkh sent in script is hashed with sha256, Decred expects blake256
                 if bid.pkhash_seller != pkhash_refund:
                     msg_buf.pkhash_seller = bid.pkhash_seller
+
+                if Coins(offer.coin_to) == Coins.NAV:
+                    msg_buf.seller_contract_pubkey = pubkey_refund
 
                 bid_bytes = msg_buf.to_bytes()
                 payload_hex = (
@@ -4241,6 +4244,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         # bid.message_nets is a local field denoting the network/s to send to
         if offer.smsg_payload_version is not None and offer.smsg_payload_version > 1:
             msg_buf.message_nets = self.getMessageNetsString()
+
+        if Coins(offer.coin_from) == Coins.NAV:
+            bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
+            msg_buf.buyer_contract_pubkey = self.getContractPubkey(bid_date, bid.contract_count)
 
         return msg_buf
 
@@ -8692,6 +8699,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             bid.was_received = True
         if len(bid_data.proof_address) > 0:
             bid.proof_address = bid_data.proof_address
+        if Coins(offer.coin_from) == Coins.NAV:
+            bid.buyer_contract_pubkey = bid_data.buyer_contract_pubkey
 
         bid.setState(BidStates.BID_RECEIVED)
         try:
@@ -8841,6 +8850,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             bid.pkhash_seller = bid_accept_data.pkhash_seller
         else:
             bid.pkhash_seller = script_pkhash2
+
+        if Coins(offer.coin_to) == Coins.NAV:
+            bid.seller_contract_pubkey = bid_accept_data.seller_contract_pubkey
 
         bid.setState(BidStates.BID_ACCEPTED)
         bid.setITxState(TxStates.TX_NONE)
