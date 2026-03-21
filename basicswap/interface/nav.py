@@ -11,6 +11,8 @@ from basicswap.interface.btc import (
 from basicswap.chainparams import Coins
 from typing import Optional, Any, TypedDict
 from basicswap.util import SerialiseNum
+from basicswap.util.crypto import sha256
+from coincurve.keys import PrivateKey
 
 class PrevOutInfo(TypedDict):
     outid: str
@@ -181,6 +183,12 @@ class NAVInterface(BTCInterface):
         self._log.info(f"---> Created raw funded transaction: {txn_funded=}")
 
         return txn_funded
+
+    def deriveBlindingKey(self, privkey: bytes, pubkey: bytes) -> int:
+        """Derive a blinding key via ECDH: SHA256(ECDH(privkey, pubkey))."""
+        ecdh_secret = PrivateKey(privkey).ecdh(pubkey)
+        blinding_key_bytes = sha256(ecdh_secret)
+        return int.from_bytes(blinding_key_bytes, "big")
 
     def describeTx(self, tx_hex: str):
         # tx_hex is expected to be sigined

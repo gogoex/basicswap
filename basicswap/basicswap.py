@@ -3905,7 +3905,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     nav_addr_refund = self.getReceiveAddressFromPool(
                         coin_from, bid_id, TxTypes.ITX_REFUND, use_cursor
                     )
-                    blinding_key = secrets.randbits(256)
+                    # Derive blinding key via ECDH
+                    seller_privkey = self.getContractPrivkey(bid_date, bid.contract_count)
+                    buyer_pubkey = bid.contract_pubkey
+                    blinding_key = ci_from.deriveBlindingKey(seller_privkey, buyer_pubkey)
 
                     lock_value = self.getLockValue(ci_from, offer)
 

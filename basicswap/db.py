@@ -259,6 +259,8 @@ class Bid(Table):
     # Height of scriptless chain before the swap
     chain_b_height_start = Column("integer")
 
+    contract_pubkey = Column("blob")  # NAV: Counterparty's contract pubkey for ECDH
+
     reject_code = Column("integer")
 
     initiate_tx = None

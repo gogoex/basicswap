@@ -23,3 +23,6 @@ compose-dev.yaml
 
 # macOS
 .DS_Store
+
+CLAUDE.md
+
