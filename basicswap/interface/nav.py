@@ -190,17 +190,6 @@ class NAVInterface(BTCInterface):
         blinding_key_bytes = sha256(ecdh_secret)
         return int.from_bytes(blinding_key_bytes, "big")
 
-    def getBlockWithTxns(self, block_hash: str):
-        # naviod crashes with verbosity 2 (MoneyRange bug), so use getblockheader
-        # and return an empty tx list — BLSCT outputs can't be identified by script scanning
-        header = self.rpc("getblockheader", [block_hash])
-        return {
-            "hash": header["hash"],
-            "previousblockhash": header.get("previousblockhash", ""),
-            "time": header["time"],
-            "tx": [],
-        }
-
     def describeTx(self, tx_hex: str):
         # tx_hex is expected to be sigined
         # for txs before signing, use decodeblsctrawtransaction
@@ -212,21 +201,17 @@ class NAVInterface(BTCInterface):
         del script
         return "tnv14adxpa06t5fywwtte3g223ef92plxqm7ls2jxqp5rwef2cz7ppdhx36ck0e42x2dkj92vw3kxfj90zpzy8ymnmqd9x9gc5wq2xv6m5rkxcxz39jpvaan4dw254ayl94h5tuy5pftaczhcrr5exz9ke0cdgr75y6ft5"
 
-    # def find_prevout_info(self, txn_hex: str, txn_script: bytes):
-    #     del txn_script
-    #     txjs = self.rpc("decoderawtransaction", [txn_hex])
-    #
-    #     return {
-    #         "txid": txjs["txid"],
-    #         "vout": 0,
-    #     }
-    #
-    # def find_htlc_vouts(txjs: dict) -> list[VOut]:
-    #     res = []
-    #     for txjs in txjs["outputs"]:
-    #         pass
-    #
-    #     return res
+    def getBlockWithTxns(self, block_hash: str):
+        # naviod crashes with verbosity 2 (MoneyRange bug), so use getblockheader
+        # and return an empty tx list since NAV will not need them.
+        header = self.rpc("getblockheader", [block_hash])
+        return {
+            "hash": header["hash"],
+            "previousblockhash": header.get("previousblockhash", ""),
+            "time": header["time"],
+            "height": header["height"],
+            "tx": [],
+        }
 
     def get_fee_rate(self, conf_target: int = 2) -> (float, str):
         del conf_target
