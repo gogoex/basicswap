@@ -190,6 +190,17 @@ class NAVInterface(BTCInterface):
         blinding_key_bytes = sha256(ecdh_secret)
         return int.from_bytes(blinding_key_bytes, "big")
 
+    def getBlockWithTxns(self, block_hash: str):
+        # naviod crashes with verbosity 2 (MoneyRange bug), so use getblockheader
+        # and return an empty tx list — BLSCT outputs can't be identified by script scanning
+        header = self.rpc("getblockheader", [block_hash])
+        return {
+            "hash": header["hash"],
+            "previousblockhash": header.get("previousblockhash", ""),
+            "time": header["time"],
+            "tx": [],
+        }
+
     def describeTx(self, tx_hex: str):
         # tx_hex is expected to be sigined
         # for txs before signing, use decodeblsctrawtransaction
