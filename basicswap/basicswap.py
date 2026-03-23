@@ -6832,7 +6832,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     self.participateTxnConfirmed(bid_id, bid, offer)
                     save_bid = True
         elif state == BidStates.SWAP_PARTICIPATING:
-            self.log.debug(f"--> In SWAP_PARTICIPATING {coin_from=} bid={vars(bid)}")
             if coin_from == Coins.NAV and hasattr(bid, 'initiate_tx'):
                 ci_from = self.ci(coin_from)
                 is_initiate_tx_spent = ci_from.isInitiateTxnSpent(bid.initiate_tx)
