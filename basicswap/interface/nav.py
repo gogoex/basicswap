@@ -13,6 +13,7 @@ from typing import Optional, Any, TypedDict
 from basicswap.util import SerialiseNum
 from basicswap.util.crypto import sha256
 from coincurve.keys import PrivateKey
+import basicswap.protocols.atomic_swap_1 as atomic_swap_1
 
 class PrevOutInfo(TypedDict):
     outid: str
@@ -60,6 +61,16 @@ class NAVInterface(BTCInterface):
         txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn])
         self._log.info(f"---> Created raw funded transaction")
         return txn_funded
+
+    def buildFakeHTLCScript(self, secret_hash: bytearray, lock_value: int) -> bytearray:
+        padded_secret_hash = secret_hash.rjust(32, b'\x00')
+        fake_script = (
+            b'\x00' * 7 +
+            padded_secret_hash +
+            b'\x00' * 25 +
+            SerialiseNum(lock_value)
+        )
+        return bytearray(fake_script)
 
     def createRawFundedTransaction(
         self,
@@ -157,7 +168,7 @@ class NAVInterface(BTCInterface):
         sequence: int,
         txn_script: bytes | None = None,
     ) -> str:
-        del locktime, sequence, txn_script 
+        del sequence, txn_script 
         navoshi_output_value = self.make_int(output_value, r=1)
         del output_value
         self._log.info(f"---> createRefundTxn amount={prevout['amount']}, {navoshi_output_value=}")
@@ -172,15 +183,15 @@ class NAVInterface(BTCInterface):
         out_params: dict[str, Any] = {
             "amount": navoshi_output_value,
             "address": output_addr,
+            "locktime": locktime,
         }
         params = [[in_params], [out_params]]
-        self._log.info(f"---> {params=}")
         txn = self.rpc("createblsctrawtransaction", params)
-        self._log.info(f"---> Created raw transaction with {params=}, {txn=}")
+        self._log.info(f"---> Creating refund txn w/ {params=}")
 
         fee = prevout["amount"] - navoshi_output_value
         txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn, None, False, fee])
-        self._log.info(f"---> Created raw funded transaction: {txn_funded=}")
+        self._log.info(f"---> Created funded refund transaction")
 
         return txn_funded
 
@@ -201,9 +212,10 @@ class NAVInterface(BTCInterface):
         del script
         return "tnv14adxpa06t5fywwtte3g223ef92plxqm7ls2jxqp5rwef2cz7ppdhx36ck0e42x2dkj92vw3kxfj90zpzy8ymnmqd9x9gc5wq2xv6m5rkxcxz39jpvaan4dw254ayl94h5tuy5pftaczhcrr5exz9ke0cdgr75y6ft5"
 
+    # TODO NAV remove this after getblock 2 issue is fixedi
     def getBlockWithTxns(self, block_hash: str):
-        # naviod crashes with verbosity 2 (MoneyRange bug), so use getblockheader
-        # and return an empty tx list since NAV will not need them.
+        # naviod crashes with getblock with verbosity 2 (MoneyRange bug),
+        # so use getblockheader and return an empty tx list b/c NAV will not use txs there
         header = self.rpc("getblockheader", [block_hash])
         return {
             "hash": header["hash"],
@@ -279,12 +291,14 @@ class NAVInterface(BTCInterface):
 
         return None
 
-    def getPrevOutInfo(self, txn_hex: str) -> PrevOutInfo:
+    def getPrevOutInfo(self, txn_hex: str, secret_hash: bytes) -> PrevOutInfo:
+        self._log.debug(f"getPrevOutInfo: secret hash={secret_hash.hex()}")
         txjs = self.rpc("decodeblsctrawtransaction", [txn_hex])
-        self._log.info(f"---> getPrevOutInfo (blsct): {txjs=}")
+        secret_hash_hex = secret_hash.hex()
 
         for output in txjs['outputs']:
-            if self.isHTLCScript(output['scriptPubKey']):
+            spk = output['scriptPubKey']
+            if self.isHTLCScript(spk) and secret_hash_hex in spk:
                 self._log.debug(f"getPrevOutInfo {output=}")
                 nav_amount = int(output['amount_navoshi'])
                 return {
@@ -293,7 +307,6 @@ class NAVInterface(BTCInterface):
                     "gamma": output['gamma'],
                     "spending_key": output['spending_key'],
                 }
-
         raise ValueError("No output with HTLC script found in {txjs=}")
 
     def getNewAddress(self, use_segwit: bool, label: str = "swap_receive") -> str:
@@ -419,6 +432,26 @@ class NAVInterface(BTCInterface):
             consume("68b3") 
         )
 
+    def isInitiateTxnSpent(self, initiate_txn) -> bool:
+        script = initiate_txn.script
+        secret_hash = atomic_swap_1.extractScriptSecretHash(script)
+        lock_value = atomic_swap_1.extractLockValue(script)
+        self._log.debug(f"initiate txn spend check: secret_hash={secret_hash.hex()} {lock_value=}")
+        try:
+            utxos = self.listBlsctUnspent(min_conf=0)
+            for utxo in utxos:
+                spk = utxo.get("scriptPubKey", "").lower()
+                spk_bytes = bytes.fromhex(spk)
+                spk_secret_hash = atomic_swap_1.extractScriptSecretHash(spk_bytes)
+                spk_lock_value = atomic_swap_1.extractLockValue(spk_bytes)
+                if self.isHTLCScript(spk) and secret_hash == spk_secret_hash and lock_value == spk_lock_value:
+                    self._log.debug(f"initiate txn spend check: found utxo {utxo=}")
+                    return False
+                    break
+        except Exception as e:
+            self._log.debug(f"Failed to check if initiate txn is spent: {e}")
+        return True
+
     def isTxNonFinalError(self, err_str: str) -> bool:
         return "bad-inputs-unknown" in err_str or "'code': 25" in err_str
     
@@ -431,16 +464,6 @@ class NAVInterface(BTCInterface):
         self._log.debug(f"---> publishing result: {res}") 
         return res
     
-    def toFakeHTLCScript(self, secret_hash: bytearray, lock_value: int) -> bytearray:
-        padded_secret_hash = secret_hash.rjust(32, b'\x00')
-        fake_script = (
-            b'\x00' * 7 +
-            padded_secret_hash +
-            b'\x00' * 25 +
-            SerialiseNum(lock_value)
-        )
-        return bytearray(fake_script)
-
     def signBlsct(self, txn):
         self._log.debug(f"---> signing blsct...")
         signed_txn = self.rpc("signblsctrawtransaction", [txn])
