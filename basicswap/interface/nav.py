@@ -62,13 +62,34 @@ class NAVInterface(BTCInterface):
         self._log.info(f"---> Created raw funded transaction")
         return txn_funded
 
-    def buildFakeHTLCScript(self, secret_hash: bytearray, lock_value: int) -> bytearray:
+    def _extractHTLCLocktime(self, script: bytes, is_nav: bool) -> int:
+        """
+        >>> hex = "6382012088a820b812e53d1bd15a928803df44ab86c6a286d9a3d6625a3738f"
+        >>> hex += "bed32d89a4c7c178830a7b9a59a0e305eef4f756909e6fa107091fc6d2b2743"
+        >>> hex += "3d110d5d3c95ff987a0182bbd2e19897ee71af0466006cc2755467042c688b6"
+        >>> hex += "9b17530a7b9a59a0e305eef4f756909e6fa107091fc6d2b27433d110d5d3c95"
+        >>> hex += "ff987a0182bbd2e19897ee71af0466006cc2755468b3"
+        >>> b = bytes.fromhex(hex)
+        >>> nav = NAVInterface()
+        >>> nav._extractHTLCLocktime(b, is_nav=True)
+        1770743852
+        """
+        beg = 91 if is_nav else 64
+        end = beg + 4
+        locktime_bytes = script[beg:end]
+        return int.from_bytes(locktime_bytes, byteorder='little')
+
+    def createFakeNonNavHTLCScript(self, secret_hash: bytearray, locktime: int) -> bytearray:
+        """
+        Create a non-NAV HTLC script with zeroed-out fields,
+        excluding the secret hash and locktime.
+        """
         padded_secret_hash = secret_hash.rjust(32, b'\x00')
         fake_script = (
             b'\x00' * 7 +
             padded_secret_hash +
             b'\x00' * 25 +
-            SerialiseNum(lock_value)
+            locktime.to_bytes(4, byteorder='little')
         )
         return bytearray(fake_script)
 
@@ -225,7 +246,7 @@ class NAVInterface(BTCInterface):
             "tx": [],
         }
 
-    def get_fee_rate(self, conf_target: int = 2) -> (float, str):
+    def get_fee_rate(self, conf_target: int = 2) -> tuple[float, str]:
         del conf_target
         chain_client_settings = self._sc.getChainClientSettings(
             self.coin_type()
@@ -370,12 +391,12 @@ class NAVInterface(BTCInterface):
         OP_ENDIF
         OP_BLSCHECKSIG        
 
-        >>> nav = NAVInterface()
         >>> hex = "6382012088a820b812e53d1bd15a928803df44ab86c6a286d9a3d6625a3738f"
         >>> hex += "bed32d89a4c7c178830a7b9a59a0e305eef4f756909e6fa107091fc6d2b2743"
         >>> hex += "3d110d5d3c95ff987a0182bbd2e19897ee71af0466006cc2755467042c688b6"
         >>> hex += "9b17530a7b9a59a0e305eef4f756909e6fa107091fc6d2b27433d110d5d3c95"
         >>> hex += "ff987a0182bbd2e19897ee71af0466006cc2755468b3"
+        >>> nav = NAVInterface()
         >>> nav.isHTLCScript(hex)
         True
         >>> nav.isHTLCScript("76a91488ac")
@@ -432,23 +453,30 @@ class NAVInterface(BTCInterface):
             consume("68b3") 
         )
 
+    # TODO NAV write test
     def isHTLCTxnSpent(self, script: bytes) -> bool:
         secret_hash = atomic_swap_1.extractScriptSecretHash(script)
-        lock_value = atomic_swap_1.extractLockValue(script)
-        self._log.debug(f"isHTLCTxnSpent: secret_hash={secret_hash.hex()} {lock_value=}")
+        locktime = self._extractHTLCLocktime(script, is_nav=False)
+        self._log.debug(f"isHTLCTxnSpent: secret_hash={secret_hash.hex()} {locktime=} script={script.hex()}")
         try:
             utxos = self.listBlsctUnspent(min_conf=0)
             for utxo in utxos:
-                spk = utxo.get("scriptPubKey", "").lower()
+                spk = utxo.get("scriptPubKey", "")
+                if not self.isHTLCScript(spk):
+                    continue
                 spk_bytes = bytes.fromhex(spk)
                 spk_secret_hash = atomic_swap_1.extractScriptSecretHash(spk_bytes)
-                spk_lock_value = atomic_swap_1.extractLockValue(spk_bytes)
-                if self.isHTLCScript(spk) and secret_hash == spk_secret_hash and lock_value == spk_lock_value:
-                    self._log.debug(f"isHTLCTxnSpent: found {utxo=}")
+                spk_locktime = self._extractHTLCLocktime(spk_bytes, is_nav=True)
+                self._log.debug(f"isHTLCTxnSpent: spk_secret_hash={spk_secret_hash.hex()} {spk_locktime=}")
+                if secret_hash == spk_secret_hash and locktime == spk_locktime:
+                    self._log.debug(f"isHTLCTxnSpent: fonund matching utxo. not spent yet: {utxo=}")
                     return False
+            self._log.debug(f"isHTLCTxnSpent: {secret_hash.hex()} is spent")
+            return True
+
         except Exception as e:
-            self._log.debug(f"Failed to check if HTLC txn is spent: {e}")
-        return True
+            self._log.error(f"Failed to check if HTLC txn is spent: {e}")
+        return False
 
     def isTxNonFinalError(self, err_str: str) -> bool:
         return "bad-inputs-unknown" in err_str or "'code': 25" in err_str

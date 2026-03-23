@@ -119,9 +119,6 @@ def verifyContractScript(
 def extractScriptSecretHash(script):
     return script[7:39]
 
-def extractLockValue(script):
-    return DeserialiseNum(script, 64)
-
 def redeemITx(self, bid_id: bytes, cursor):
     bid, offer = self.getBidAndOffer(bid_id, cursor)
     ci_from = self.ci(offer.coin_from)

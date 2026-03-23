@@ -3976,7 +3976,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     vout=lock_tx_vout,
                     tx_data=bytes.fromhex(txn),
                     tx_data_funded=bytes.fromhex(txn_funded) if coin_from == Coins.NAV else None,
-                    script=ci_from.buildFakeHTLCScript(secret_hash, lock_value) if coin_from == Coins.NAV else script,
+                    script=ci_from.createFakeNonNavHTLCScript(secret_hash, lock_value) if coin_from == Coins.NAV else script,
                 )
                 bid.setITxState(TxStates.TX_SENT)
                 self.logEvent(
@@ -6835,7 +6835,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             if coin_from == Coins.NAV and hasattr(bid, 'initiate_tx'):
                 ci_from = self.ci(coin_from)
                 is_initiate_tx_spent = ci_from.isHTLCTxnSpent(bid.initiate_tx.script)
-
                 self.log.debug(
                     f"NAV initiate tx spend check for bid {self.log.id(bid_id)}: "
                     f"{is_initiate_tx_spent=}, "
