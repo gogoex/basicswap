@@ -435,7 +435,7 @@ class NAVInterface(BTCInterface):
     def isHTLCTxnSpent(self, script: bytes) -> bool:
         secret_hash = atomic_swap_1.extractScriptSecretHash(script)
         lock_value = atomic_swap_1.extractLockValue(script)
-        self._log.debug(f"initiate txn spend check: secret_hash={secret_hash.hex()} {lock_value=}")
+        self._log.debug(f"isHTLCTxnSpent: secret_hash={secret_hash.hex()} {lock_value=}")
         try:
             utxos = self.listBlsctUnspent(min_conf=0)
             for utxo in utxos:
@@ -444,11 +444,10 @@ class NAVInterface(BTCInterface):
                 spk_secret_hash = atomic_swap_1.extractScriptSecretHash(spk_bytes)
                 spk_lock_value = atomic_swap_1.extractLockValue(spk_bytes)
                 if self.isHTLCScript(spk) and secret_hash == spk_secret_hash and lock_value == spk_lock_value:
-                    self._log.debug(f"initiate txn spend check: found utxo {utxo=}")
+                    self._log.debug(f"isHTLCTxnSpent: found {utxo=}")
                     return False
-                    break
         except Exception as e:
-            self._log.debug(f"Failed to check if initiate txn is spent: {e}")
+            self._log.debug(f"Failed to check if HTLC txn is spent: {e}")
         return True
 
     def isTxNonFinalError(self, err_str: str) -> bool:
