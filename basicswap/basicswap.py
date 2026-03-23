@@ -6834,7 +6834,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         elif state == BidStates.SWAP_PARTICIPATING:
             if coin_from == Coins.NAV and hasattr(bid, 'initiate_tx'):
                 ci_from = self.ci(coin_from)
-                is_initiate_tx_spent = ci_from.isInitiateTxnSpent(bid.initiate_tx)
+                is_initiate_tx_spent = ci_from.isHTLCTxnSpent(bid.initiate_tx.script)
 
                 self.log.debug(
                     f"NAV initiate tx spend check for bid {self.log.id(bid_id)}: "

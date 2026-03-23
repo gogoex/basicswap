@@ -432,8 +432,7 @@ class NAVInterface(BTCInterface):
             consume("68b3") 
         )
 
-    def isInitiateTxnSpent(self, initiate_txn) -> bool:
-        script = initiate_txn.script
+    def isHTLCTxnSpent(self, script: bytes) -> bool:
         secret_hash = atomic_swap_1.extractScriptSecretHash(script)
         lock_value = atomic_swap_1.extractLockValue(script)
         self._log.debug(f"initiate txn spend check: secret_hash={secret_hash.hex()} {lock_value=}")
