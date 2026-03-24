@@ -3827,7 +3827,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             if bid.contract_count is None:
                 bid.contract_count = self.getNewContractId(use_cursor)
 
-            self.log.info(f"---> bid.contract_count is {bid.contract_count}")
             coin_from = Coins(offer.coin_from)
             ci_from = self.ci(coin_from)
             ci_to = self.ci(offer.coin_to)
@@ -3835,7 +3834,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
             secret = self.getContractSecret(bid_date, bid.contract_count)
             secret_hash = sha256(secret)
-            self.log.info(f"---> created {secret_hash=} with count {bid.contract_count}")
 
             pubkey_refund = self.getContractPubkey(bid_date, bid.contract_count)
             pkhash_refund = ci_from.pkh(pubkey_refund)
@@ -3989,8 +3987,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
                 # Check non-bip68 final
                 try:
-                    self.log.info("---> creating refund txn...")
-                    txid = ci_from.publishTx(bid.initiate_txn_refund)
+                    txid = ci_from.publishTx(bid.initiate_txn_refund, show_log=False)
                     self.log.info(f"---> refund txid is {txid}")
                     self.log.error(
                         f"Submit refund_txn unexpectedly worked {self.logIDT(bytes.fromhex(txid))}"

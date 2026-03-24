@@ -467,7 +467,6 @@ class NAVInterface(BTCInterface):
                 spk_bytes = bytes.fromhex(spk)
                 spk_secret_hash = atomic_swap_1.extractScriptSecretHash(spk_bytes)
                 spk_locktime = self._extractHTLCLocktime(spk_bytes, is_nav=True)
-                self._log.debug(f"isHTLCTxnSpent: spk_secret_hash={spk_secret_hash.hex()} {spk_locktime=}")
                 if secret_hash == spk_secret_hash and locktime == spk_locktime:
                     self._log.debug(f"isHTLCTxnSpent: fonund matching utxo. not spent yet: {utxo=}")
                     return False
@@ -484,10 +483,12 @@ class NAVInterface(BTCInterface):
     def listBlsctUnspent(self, min_conf: int = 1) -> list:
         return self.rpc_wallet("listblsctunspent", [min_conf])
 
-    def publishTx(self, tx: bytes):
-        self._log.debug(f"---> publishing: {tx.hex()}") 
+    def publishTx(self, tx: bytes, show_log: bool = True):
+        if show_log:
+            self._log.debug(f"---> publishing: {tx.hex()}") 
         res = self.rpc("sendrawtransaction", [tx.hex()])
-        self._log.debug(f"---> publishing result: {res}") 
+        if show_log:
+            self._log.debug(f"---> publishing result: {res}") 
         return res
     
     def signBlsct(self, txn):
