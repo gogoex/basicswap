@@ -3987,7 +3987,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
                 # Check non-bip68 final
                 try:
-                    txid = ci_from.publishTx(bid.initiate_txn_refund, show_log=False)
+                    txid = ci_from.publishTx(bid.initiate_txn_refund)
                     self.log.info(f"---> refund txid is {txid}")
                     self.log.error(
                         f"Submit refund_txn unexpectedly worked {self.logIDT(bytes.fromhex(txid))}"

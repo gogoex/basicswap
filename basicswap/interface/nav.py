@@ -219,6 +219,9 @@ class NAVInterface(BTCInterface):
 
     def deriveBlindingKey(self, privkey: bytes, pubkey: bytes) -> int:
         """Derive a blinding key via ECDH: SHA256(ECDH(privkey, pubkey))."""
+        self._log.info(f"---> deriveBlindingKey priv={privkey.hex()}, pub={pubkey.hex()}")
+        self._log.info(f"---> deriveBlindingKey pub={pubkey.hex()}")
+
         ecdh_secret = PrivateKey(privkey).ecdh(pubkey)
         blinding_key_bytes = sha256(ecdh_secret)
         return int.from_bytes(blinding_key_bytes, "big")
@@ -511,13 +514,8 @@ class NAVInterface(BTCInterface):
     def listBlsctUnspent(self, min_conf: int = 1) -> list:
         return self.rpc_wallet("listblsctunspent", [min_conf])
 
-    def publishTx(self, tx: bytes, show_log: bool = True):
-        if show_log:
-            self._log.debug(f"---> publishing: {tx.hex()}") 
-        res = self.rpc("sendrawtransaction", [tx.hex()])
-        if show_log:
-            self._log.debug(f"---> publishing result: {res}") 
-        return res
+    def publishTx(self, tx: bytes):
+        return self.rpc("sendrawtransaction", [tx.hex()])
     
     def signBlsct(self, txn):
         self._log.debug(f"---> signing blsct...")
