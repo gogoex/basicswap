@@ -1662,9 +1662,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             return
 
         root_key = self.getWalletKey(interface_type, 1)
-        # # TODO NAVIO delete this
-        # if interface_type == Coins.LTC:
-        #     root_key = bytes.fromhex("e2a6e2cdbac6007288600d9c884cc66389bad8abb3cd73c3092b904a67946e8f")
+        # TODO NAVIO delete this
+        if interface_type == Coins.LTC:
+            root_key = bytes.fromhex("e2a6e2cdbac6007288600d9c884cc66389bad8abb3cd73c3092b904a67946e8f")
         self.log.info(f"Root key ({ci.coin_name()}): {root_key.hex()}")
         try:
             ci.initialiseWallet(root_key, restore_time)
