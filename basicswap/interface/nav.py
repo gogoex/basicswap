@@ -313,6 +313,17 @@ class NAVInterface(BTCInterface):
 
         return None
 
+    def getNewAddress(self, use_segwit: bool, label: str = "swap_receive") -> str:
+        del use_segwit
+        address: str = self.rpc(
+            "getnewaddress",
+            [
+                label,
+                "blsct",
+            ],
+        )
+        return address
+
     def getParticipateLockValue(self, bid, offer, bid_id, ci_from) -> int:
         """Calculate the locktime/sequence for the NAV participate tx.
         The participate tx is locked for half the time of the initiate tx.
@@ -348,17 +359,6 @@ class NAVInterface(BTCInterface):
                     "spending_key": output['spending_key'],
                 }
         raise ValueError("No output with HTLC script found in {txjs=}")
-
-    def getNewAddress(self, use_segwit: bool, label: str = "swap_receive") -> str:
-        del use_segwit
-        address: str = self.rpc(
-            "getnewaddress",
-            [
-                label,
-                "blsct",
-            ],
-        )
-        return address
 
     def getProofOfFunds(self, amount_for, extra_commit_bytes):
         amount_btc = amount_for / 100_000_000
