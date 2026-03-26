@@ -360,6 +360,15 @@ class NAVInterface(BTCInterface):
         )
         return address
 
+    def getProofOfFunds(self, amount_for, extra_commit_bytes):
+        amount_btc = amount_for / 100_000_000
+        additional_commitment = extra_commit_bytes.hex()
+        result = self.rpc_wallet(
+            "createblsctbalanceproof", [amount_btc, additional_commitment]
+        )
+        proof_hex = result["proof"]
+        return ("blsct_balance_proof", proof_hex, [])
+
     def getSeedHash(self, seed: bytes) -> bytes:
         del seed
         seedid_hex = self.getWalletSeedID()
@@ -515,6 +524,16 @@ class NAVInterface(BTCInterface):
         signed_txn = self.rpc("signblsctrawtransaction", [txn])
         self._log.debug(f"---> signed blsct {signed_txn=}")
         return signed_txn
+
+    def verifyProofOfFunds(self, address, signature, utxos, extra_commit_bytes):
+        additional_commitment = extra_commit_bytes.hex()
+        result = self.rpc(
+            "verifyblsctbalanceproof", [signature, additional_commitment]
+        )
+        if not result.get("valid", False):
+            raise ValueError("BLSCT balance proof invalid")
+        min_amount_btc = result["min_amount"]
+        return int(round(min_amount_btc * 100_000_000))
 
     def verifyRawTransaction(self, txn, prevouts):
         del prevouts
