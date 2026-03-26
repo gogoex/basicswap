@@ -5257,7 +5257,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         if self.coin_clients[coin_to]["connection_type"] != "rpc":
             return None
         ci = self.ci(coin_to)
-        self.log.debug(f"---> {ci=}")
 
         amount_to: int = bid.amount_to
 
@@ -5272,6 +5271,42 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 "ind {}".format(bid.debug_ind),
                 None,
             )
+
+        if coin_to == Coins.NAV:
+            secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
+            nav_addr_redeem = self.getReceiveAddressFromPool(coin_to, bid_id, TxTypes.PTX_REDEEM, None)
+            nav_addr_refund = self.getReceiveAddressFromPool(coin_to, bid_id, TxTypes.PTX_REFUND, None)
+            bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
+            buyer_privkey = self.getContractPrivkey(bid_date, bid.contract_count)
+            lock_value = ci.getParticipateLockValue(bid, offer, bid_id, self.ci(offer.coin_from))
+            blinding_key = ci.deriveBlindingKey(buyer_privkey, bid.seller_contract_pubkey)
+            txn_funded, vout_index = ci.createInitiateTxn(
+                nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key, amount_to,
+            )
+            participate_script = ci.createFakeNonNavHTLCScript(secret_hash, lock_value)
+            refund_txn = self.createRefundTxn(
+                coin_to, txn_funded, offer, bid, participate_script,
+                addr_refund_out=nav_addr_refund, secret_hash=secret_hash, tx_type=TxTypes.PTX_REFUND,
+            )
+            bid.participate_txn_refund = bytes.fromhex(refund_txn)
+            txn_signed = ci.signBlsct(txn_funded)
+            txjs = ci.rpc("decodeblsctrawtransaction", [txn_signed])
+            txid = txjs["txid"]
+            params = {
+                "type": "atomic_swap",
+                "address_a": nav_addr_redeem,
+                "address_b": nav_addr_refund,
+                "hash": secret_hash.hex(),
+                "locktime": lock_value,
+                "blinding_key": f"{blinding_key:064x}",
+            }
+            ci.importBlsctScript(params, rescan=False)
+            chain_height = ci.getChainHeight()
+            self.addParticipateTxn(bid_id, bid, coin_to, txid, vout_index, chain_height)
+            bid.participate_tx.script = participate_script
+            bid.participate_tx.tx_data = bytes.fromhex(txn_signed)
+            bid.participate_tx.tx_data_funded = bytes.fromhex(txn_funded)
+            return txn_signed
 
         if ci.using_segwit():
             p2wsh = ci.getScriptDest(participate_script)
