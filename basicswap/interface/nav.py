@@ -321,11 +321,14 @@ class NAVInterface(BTCInterface):
         lock_value = offer.lock_value // 2
         if offer.lock_type < TxLockTypes.ABS_LOCK_BLOCKS:
             return self.getExpectedSequence(offer.lock_type, lock_value)
+
         block_header = ci_from.getBlockHeaderFromHeight(bid.initiate_tx.chain_height)
         initiate_tx_block_time = block_header["time"]
+
         if offer.lock_type == TxLockTypes.ABS_LOCK_BLOCKS:
             block_header_at = self.getBlockHeaderAt(initiate_tx_block_time, block_after=True)
             return block_header_at["height"] + lock_value
+
         return initiate_tx_block_time + lock_value
 
     def getPrevOutInfo(self, txn_hex: str, secret_hash: bytes) -> PrevOutInfo:
