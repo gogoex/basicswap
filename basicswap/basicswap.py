@@ -3997,8 +3997,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                         self.log.error(f"Submit refund_txn unexpected error: {ex}")
                         raise ex
 
+            self.log.info(f"---> acceptBid: {txid=}")
             if txid is not None:
-                self.log.info("---> Sending message...")
                 msg_buf = BidAcceptMessage()
                 msg_buf.bid_msg_id = bid_id
                 msg_buf.initiate_txid = bytes.fromhex(txid)
@@ -4009,8 +4009,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     msg_buf.pkhash_seller = bid.pkhash_seller
 
                 if Coins(offer.coin_to) == Coins.NAV:
+                    self.log.info(f"---> acceptBid: {pubkey_refund=}")
                     msg_buf.seller_contract_pubkey = pubkey_refund
 
+                self.log.info(f"---> acceptBid: msg_buf={vars(msg_buf)}")
                 bid_bytes = msg_buf.to_bytes()
                 payload_hex = (
                     str.format("{:02x}", MessageTypes.BID_ACCEPT) + bid_bytes.hex()
@@ -5290,7 +5292,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             )
             bid.participate_txn_refund = bytes.fromhex(refund_txn)
             txn_signed = ci.signBlsct(txn_funded)
-            txjs = ci.rpc("decodeblsctrawtransaction", [txn_signed])
+            txjs = ci.rpc("decoderawtransaction", [txn_signed])
             txid = txjs["txid"]
             params = {
                 "type": "atomic_swap",
@@ -5382,9 +5384,12 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         ensure(len(secret) == 32, "Bad secret length")
 
         if coin_type == Coins.NAV:
-            txn = bid.initiate_tx.tx_data_funded.hex()
+            if bid.participate_tx is not None and bid.participate_tx.tx_data_funded:
+                txn = bid.participate_tx.tx_data_funded.hex()
+            else:
+                txn = bid.initiate_tx.tx_data_funded.hex()
             contract_secret = atomic_swap_1.extractScriptSecretHash(txn_script)
-            prevout = ci.getPrevOutInfo(txn, contract_secret)
+            prevout = ci.getPrevOutInfo(txn, contract_secret, txn_script)
             self.log.debug(f"---> {prevout=}")
         else:
             prevout = {
@@ -5558,7 +5563,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             prevout = ci.find_prevout_info(txn, txn_script)
         elif coin_type == Coins.NAV:
             # txn is a funded transaciton
-            prevout = ci.getPrevOutInfo(txn, secret_hash)
+            prevout = ci.getPrevOutInfo(txn, secret_hash, txn_script)
             self.log.info(f"---> got NAV {prevout=}")
         else:
             # TODO: Sign in bsx for all coins
@@ -6795,8 +6800,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 self.saveBid(bid_id, bid)
                 return True  # Mark bid for archiving
         elif state == BidStates.SWAP_INITIATED:
-            # Waiting for participate txn to be confirmed in 'to' chain
-            if ci_to.using_segwit():
+            # Waiting for participate txn 
+            if coin_to == Coins.NAV:
+                addr = atomic_swap_1.extractScriptSecretHash(bid.participate_tx.script).hex()
+            elif ci_to.using_segwit():
                 p2wsh = ci_to.getScriptDest(bid.participate_tx.script)
                 addr = ci_to.encodeScriptDest(p2wsh)
             else:
@@ -8754,6 +8761,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         bid_accept_bytes = self.getSmsgMsgBytes(msg)
         bid_accept_data = BidAcceptMessage(init_all=False)
         bid_accept_data.from_bytes(bid_accept_bytes)
+        self.log.debug(f"---> ProcessBidAccept: bid_accept_data = {vars(bid_accept_data)}")
 
         ensure(len(bid_accept_data.bid_msg_id) == 28, "Bad bid_msg_id length")
         ensure(len(bid_accept_data.initiate_txid) == 32, "Bad initiate_txid length")
@@ -8770,6 +8778,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         ensure(msg["to"] == bid.bid_addr, "Received on incorrect address")
         ensure(msg["from"] == offer.addr_from, "Sent from incorrect address")
 
+        bid.seller_contract_pubkey = bid_accept_data.seller_contract_pubkey
+        self.log.debug(f"seller_countract_pubkey {bid.seller_contract_pubkey=}")
+        self.log.debug(f"bid_accept_data: {vars(bid_accept_data)}")
+
         coin_from = Coins(offer.coin_from)
         ci_from = self.ci(coin_from)
 
@@ -8778,7 +8790,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 accept_msg_id: bytes = self.getLinkedMessageId(
                     Concepts.BID, bid_id, MessageTypes.BID_ACCEPT
                 )
-
+                self.saveBid(bid_id, bid)
+                self.swaps_in_progress[bid_id] = (bid, offer)
                 self.log.info(
                     f"Received valid bid accept {self.logIDM(accept_msg_id)} for bid {self.log.id(bid_id)} sent to self."
                 )
