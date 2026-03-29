@@ -75,9 +75,11 @@ class NAVInterface(BTCInterface):
         >>> nav._extractHTLCLocktime(b, is_nav=True)
         1770743852
         """
-        beg = 91 if is_nav else 64
-        end = beg + 4
-        locktime_bytes = script[beg:end]
+        if is_nav:
+            locktime_bytes = script[91:95]
+        else:
+            push_size = script[64]
+            locktime_bytes = script[65:65 + push_size]
         return int.from_bytes(locktime_bytes, byteorder='little')
 
     def createFakeNonNavHTLCScript(self, secret_hash: bytearray, locktime: int) -> bytearray:
@@ -284,23 +286,28 @@ class NAVInterface(BTCInterface):
         rescan_from,
         find_index: bool = False,
         vout: int = -1,
+        *,
+        locktime: int,
     ):
         """BLSCT outputs don't have standard addresses, and tx hashes change
         after block aggregation.  Search listblsctunspent for the HTLC output
         matching dest_address (which contains the secret_hash for NAV). """
-        del bid_amount, rescan_from, txid
+        del bid_amount, rescan_from, txid, find_index, vout
         self._log.info(f"---> getLockTxHeight: {dest_address=}")
         if not dest_address:
             return None
 
-        # checkBidState is expected to pass the secret hash embedded in the
-        # HTLC script as dest_address 
         secret_hash = dest_address.lower()
         try:
             utxos = self.listBlsctUnspent(min_conf=0)
             for utxo in utxos:
                 utxo_spk = utxo.get("scriptPubKey", "").lower()
-                if self.isHTLCScript(utxo_spk) and secret_hash in utxo_spk:
+                if not self.isHTLCScript(utxo_spk):
+                    continue
+                spk_secret_hash = atomic_swap_1.extractScriptSecretHash(bytes.fromhex(utxo_spk)).hex()
+                spk_locktime = self._extractHTLCLocktime(bytes.fromhex(utxo_spk), is_nav=True)
+
+                if spk_secret_hash == secret_hash and spk_locktime == locktime:
                     confirmations = utxo.get("confirmations", 0)
                     chain_info = self.rpc("getblockchaininfo")
                     chain_height = chain_info["blocks"]
@@ -309,8 +316,6 @@ class NAVInterface(BTCInterface):
                         "depth": confirmations,
                         "height": block_height,
                     }
-                    if find_index:
-                        rv["index"] = vout if vout >= 0 else 0
                     self._log.debug(f"getLockTxHeight found HTLC via listblsctunspent: {rv}")
                     return rv
         except Exception as e:
@@ -346,24 +351,22 @@ class NAVInterface(BTCInterface):
             # SEQUENCE_LOCK_TIME and ABS_LOCK_TIME: return absolute timestamp
             return initiate_tx_block_time + lock_value
 
-    def getPrevOutInfo(self, txn_hex: str, secret_hash: bytes, script: bytes) -> PrevOutInfo:
-        locktime = self._extractHTLCLocktime(script, is_nav=False)
-        self._log.debug(f"getPrevOutInfo: secret_hash={secret_hash.hex()} {locktime=}")
-        utxos = self.listBlsctUnspent(min_conf=0)
-        for utxo in utxos:
-            spk = utxo.get("scriptPubKey", "")
+    def getPrevOutInfoFromOffChainTxn(self, txn_hex: str, secret_hash: bytes) -> PrevOutInfo:
+        txjs = self.rpc_wallet("decodeblsctrawtransaction", [txn_hex])
+        self._log.debug(f"getPrevOutInfoFromOffChainTxn: secret_hash={secret_hash.hex()}")
+        for output in txjs.get("outputs", []):
+            spk = output.get("scriptPubKey", "")
             if not self.isHTLCScript(spk):
                 continue
-            spk_bytes = bytes.fromhex(spk)
-            spk_secret_hash = atomic_swap_1.extractScriptSecretHash(spk_bytes)
-            spk_locktime = self._extractHTLCLocktime(spk_bytes, is_nav=True)
-            if secret_hash == spk_secret_hash and spk_locktime == locktime:
-                self._log.info(f"---> got NAV prevout={utxo}")
+            spk_secret_hash = atomic_swap_1.extractScriptSecretHash(bytes.fromhex(spk))
+            self._log.debug(f"found HTLC script: spk_secret_hash={spk_secret_hash.hex()}")
+            if secret_hash == spk_secret_hash:
+                self._log.info(f"---> got NAV prevout (off-chain)={output}")
                 return {
-                    "outid": utxo["outid"],
-                    "amount": utxo["amount_navoshi"],
-                    "gamma": utxo["gamma"],
-                    "spending_key": utxo["spending_key"],
+                    "outid": output["outputHash"],
+                    "amount": output["amount"],
+                    "gamma": output["gamma"],
+                    "spending_key": output["spending_key"],
                 }
         raise ValueError(f"No HTLC output found for secret_hash={secret_hash.hex()}")
 
