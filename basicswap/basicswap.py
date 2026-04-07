@@ -1663,8 +1663,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         root_key = self.getWalletKey(interface_type, 1)
         # TODO NAVIO delete this
-        if interface_type == Coins.LTC:
-            root_key = bytes.fromhex("e2a6e2cdbac6007288600d9c884cc66389bad8abb3cd73c3092b904a67946e8f")
+        # if interface_type == Coins.LTC:
+        #     root_key = bytes.fromhex("e2a6e2cdbac6007288600d9c884cc66389bad8abb3cd73c3092b904a67946e8f")
         self.log.info(f"Root key ({ci.coin_name()}): {root_key.hex()}")
         try:
             ci.initialiseWallet(root_key, restore_time)
@@ -3056,7 +3056,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             return False
 
         seed_key: str = "main_wallet_seedid_" + ci.coin_name().lower()
-        expect_seedid: str = self.getStringKV(seed_key)
+        expect_seedid: str | None = self.getStringKV(seed_key)
         if expect_seedid is None:
             self.log.warning(
                 f"Can't find expected wallet seed id for coin {ci.coin_name()}."
@@ -3067,8 +3067,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     f"Setting seed ID for coin {ci.coin_name()} from master key."
                 )
                 root_key = self.getWalletKey(c, 1)
-                # TODO NAVIO delete this
-                self.log.info(f"root_key for {c}: {rk}", rk = root_key.hex())
+                self.log.info(f"root_key for {c}: {root_key.hex()}")
                 self.storeSeedIDForCoin(root_key, c)
                 expect_seedid: str = self.getStringKV(seed_key)
             else:

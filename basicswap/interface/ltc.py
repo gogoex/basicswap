@@ -92,9 +92,9 @@ class LTCInterface(BTCInterface):
     #     return "tltc1q8j3ldsxgynea7n4a4u0wpjjtcj3vvma2q73t99"
     #
     # TODO NAVIO delete this
-    def initialiseWallet(self, key_bytes, restore_time: int = -1):
-        del key_bytes, restore_time
-        pass
+    # def initialiseWallet(self, key_bytes, restore_time: int = -1):
+    #     del key_bytes, restore_time
+    #     pass
 
 class LTCInterfaceMWEB(LTCInterface):
 

@@ -95,6 +95,15 @@ def startDaemon(node_dir, bin_dir, daemon_bin, opts=[], extra_config={}):
     datadir_path = os.path.expanduser(node_dir)
     coin_name = extra_config.get("coin_name", "")
 
+    # TODO NAV Revert this after binary fix
+    if coin_name == "navio" and sys.platform == "darwin":
+        for nav_bin in [daemon_bin, daemon_bin.replace("naviod", "navio-cli")]:
+            try:
+                subprocess.run(["codesign", "-f", "-s", "-", nav_bin], check=True)
+                logger.info(f"Ad-hoc signed {nav_bin}")
+            except Exception as e:
+                logger.warning(f"codesign failed for {nav_bin}: {e}")
+
     # Rewrite litecoin.conf
     # TODO: Remove
     ltc_conf_path = os.path.join(datadir_path, "litecoin.conf")
@@ -381,6 +390,20 @@ def runClient(
             for ln in fd:
                 # TODO: try close
                 logger.warning("Found pid for daemon {}".format(ln.strip()))
+
+    # TODO NAV Revert this after binary fix
+    if sys.platform == "darwin":
+        for coin_name, chain_client in settings.get("chainclients", {}).items():
+            if coin_name == "navio":
+                nav_bin_dir = os.path.expanduser(chain_client.get("bindir", ""))
+                for nav_bin in ["naviod", "navio-cli"]:
+                    nav_bin_path = os.path.join(nav_bin_dir, nav_bin)
+                    if os.path.exists(nav_bin_path):
+                        try:
+                            subprocess.run(["codesign", "-f", "-s", "-", nav_bin_path], check=True)
+                            logger.info(f"Ad-hoc signed {nav_bin_path}")
+                        except Exception as e:
+                            logger.warning(f"codesign failed for {nav_bin_path}: {e}")
 
     # Ensure daemons are stopped
     swap_client.stopDaemons()
