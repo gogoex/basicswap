@@ -1465,18 +1465,13 @@ def prepareDataDir(coin, settings, chain, particl_mnemonic, extra_opts={}):
                     )
                 )
         elif coin == "navio":
-            # TODO use mainnet config
-            kvs = [
-                ["prune", "4000"],
-                ["fallbackfee", "0.0002"],
-                ["server", "1"],
-                ["listen", "1"],
-                ["addnode", "testnet.nav.io"],
-            ]
-            for kv in kvs:
-              fp.write(f"{kv[0]}={kv[1]}\n")
-
-            if NAV_RPC_USER != "":
+            fp.write("prune=4000\n")
+            fp.write("fallbackfee=0.0002\n")
+            fp.write("server=1\n")
+            fp.write("listen=1\n")
+            if chain == "testnet":
+                fp.write("addnode=testnet.nav.io\n")
+            if NAV_RPC_USER != "" and NAV_RPC_PWD != "":
                 fp.write(
                     "rpcauth={}:{}${}\n".format(
                         NAV_RPC_USER, salt, password_to_hmac(salt, NAV_RPC_PWD)
