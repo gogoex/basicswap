@@ -506,12 +506,19 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         )
 
         # Encode key to match network
-        wif_prefix = chainparams[Coins.PART][self.chain]["key_prefix"]
+        # TODO NAV revert this after testnet is back
+        # wif_prefix = chainparams[Coins.PART][self.chain]["key_prefix"]
+        # self.network_addr = pubkeyToAddress(
+        #     chainparams[Coins.PART][self.chain]["pubkey_address"],
+        #     bytes.fromhex(self.network_pubkey),
+        # )
+        part_chain = self.settings.get("chainclients", {}).get("particl", {}).get("chain_override", self.chain)
+        wif_prefix = chainparams[Coins.PART][part_chain]["key_prefix"]
         self.network_key = toWIF(wif_prefix, decodeWif(self.settings["network_key"]))
 
         self.network_pubkey = self.settings["network_pubkey"]
         self.network_addr = pubkeyToAddress(
-            chainparams[Coins.PART][self.chain]["pubkey_address"],
+            chainparams[Coins.PART][part_chain]["pubkey_address"],
             bytes.fromhex(self.network_pubkey),
         )
 
