@@ -166,10 +166,17 @@ class BaseApp(DBMethods):
 
     def getChainDatadirPath(self, coin) -> str:
         datadir = self.coin_clients[coin]["datadir"]
+        # TODO NAV revert this after testnet is back
+        # testnet_name = (
+        #     ""
+        #     if self.chain == "mainnet"
+        #     else chainparams[coin][self.chain].get("name", self.chain)
+        # )
+        chain = self.coin_clients[coin].get("chain_override", self.chain)
         testnet_name = (
             ""
-            if self.chain == "mainnet"
-            else chainparams[coin][self.chain].get("name", self.chain)
+            if chain == "mainnet"
+            else chainparams[coin][chain].get("name", chain)
         )
         return os.path.join(datadir, testnet_name)
 
@@ -203,8 +210,12 @@ class BaseApp(DBMethods):
         args = [
             command_cli,
         ]
-        if self.chain != "mainnet":
-            args.append("-" + self.chain)
+        # TODO NAV revert this after testnet is back
+        # if self.chain != "mainnet":
+        #     args.append("-" + self.chain)
+        chain = self.coin_clients[coin_type].get("chain_override", self.chain)
+        if chain != "mainnet":
+            args.append("-" + chain)
         args.append("-datadir=" + datadir)
         args += shlex.split(params)
         p = subprocess.Popen(

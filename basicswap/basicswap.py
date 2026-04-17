@@ -981,12 +981,21 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
     def createInterface(self, coin):
         if coin == Coins.PART:
-            interface = PARTInterface(self.coin_clients[coin], self.chain, self)
+            # TODO NAV revert this after testnet is back
+            # interface = PARTInterface(self.coin_clients[coin], self.chain, self)
+            # self.coin_clients[coin]["interface_anon"] = PARTInterfaceAnon(
+            #     self.coin_clients[coin], self.chain, self
+            # )
+            # self.coin_clients[coin]["interface_blind"] = PARTInterfaceBlind(
+            #     self.coin_clients[coin], self.chain, self
+            # )
+            part_chain = self.coin_clients[coin].get("chain_override", self.chain)
+            interface = PARTInterface(self.coin_clients[coin], part_chain, self)
             self.coin_clients[coin]["interface_anon"] = PARTInterfaceAnon(
-                self.coin_clients[coin], self.chain, self
+                self.coin_clients[coin], part_chain, self
             )
             self.coin_clients[coin]["interface_blind"] = PARTInterfaceBlind(
-                self.coin_clients[coin], self.chain, self
+                self.coin_clients[coin], part_chain, self
             )
             return interface
         elif coin == Coins.BTC:
@@ -3069,7 +3078,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 root_key = self.getWalletKey(c, 1)
                 self.log.info(f"root_key for {c}: {root_key.hex()}")
                 self.storeSeedIDForCoin(root_key, c)
-                expect_seedid: str = self.getStringKV(seed_key)
+                expect_seedid: str | None = self.getStringKV(seed_key)
             else:
                 self.log.warning("Node is locked.")
                 return False
