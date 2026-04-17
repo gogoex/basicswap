@@ -770,6 +770,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             "wallet_name",
             "watch_wallet_name",
             "mweb_wallet_name",
+            "chain_override",  # TODO NAV revert this after testnet is back
         ):
             if setting_name in chain_client_settings:
                 self.coin_clients[coin][setting_name] = chain_client_settings[
