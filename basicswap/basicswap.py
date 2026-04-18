@@ -5328,6 +5328,11 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             addr_b_bytes = nav_addr_refund.encode()
             blinding_key_bytes = blinding_key.to_bytes(32, "big")
             lock_value_bytes = lock_value.to_bytes(4, "big")
+            tx_data_bytes = bytes.fromhex(txn_funded)
+            tx_data_len_bytes = len(tx_data_bytes).to_bytes(4, "big")
+            # Encoding (after msg_type byte): bid_id(28B) + blinding_key(32B) +
+            #   lock_value(4B) + addr_a_len(1B) + addr_a + addr_b_len(1B) + addr_b
+            #   + tx_data_len(4B) + tx_data_funded
             nav_ptx_import_payload = (
                 format(int(MessageTypes.NAV_PTX_IMPORT), "02x")
                 + bid_id.hex()
@@ -5337,6 +5342,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 + addr_a_bytes.hex()
                 + format(len(addr_b_bytes), "02x")
                 + addr_b_bytes.hex()
+                + tx_data_len_bytes.hex()
+                + tx_data_bytes.hex()
             )
             chain_height = ci.getChainHeight()
             self.addParticipateTxn(bid_id, bid, coin_to, txid, vout_index, chain_height)
@@ -5995,6 +6002,14 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         addr_b_len = msg_bytes[offset]
         offset += 1
         nav_addr_refund = msg_bytes[offset: offset + addr_b_len].decode()
+        offset += addr_b_len
+        # tx_data_funded: raw funded NAV PTX for the server to use in createRedeemTxn
+        if offset < len(msg_bytes):
+            tx_data_len = int.from_bytes(msg_bytes[offset: offset + 4], "big")
+            offset += 4
+            tx_data_funded_bytes = msg_bytes[offset: offset + tx_data_len]
+        else:
+            tx_data_funded_bytes = None
 
         self.log.info(f"processNavPtxImport: bid {self.log.id(bid_id)}, {nav_addr_redeem=}, {lock_value=}")
         bid, offer = self.getBidAndOffer(bid_id)
@@ -6017,6 +6032,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         ci_nav = self.ci(Coins.NAV)
         ci_nav.importBlsctScript(params, rescan=False)
         self.log.info(f"Imported NAV PTX HTLC script for bid {self.log.id(bid_id)}")
+        if tx_data_funded_bytes is not None:
+            bid.participate_tx.tx_data_funded = tx_data_funded_bytes
+            self.saveBid(bid_id, bid)
+            self.log.info(f"Stored NAV PTX tx_data_funded for bid {self.log.id(bid_id)}")
 
     def getTotalBalance(self, coin_type) -> int:
         try:
@@ -6945,31 +6964,47 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     vout=participate_txvout,
                 )
             if found:
-                index = found.get("index", participate_txvout)
-                if bid.participate_tx.conf != found["depth"]:
-                    save_bid = True
-                if (
-                    bid.participate_tx.conf is None
-                    and bid.participate_tx.state != TxStates.TX_SENT
-                ):
-                    txid = found.get(
-                        "txid",
-                        None if participate_txid is None else participate_txid.hex(),
-                    )
-                    self.log.debug(
-                        f"Found bid {self.log.id(bid_id)} participate txn {self.log.id(txid)} in chain {ci_to.coin_name()}."
-                    )
-                    self.addParticipateTxn(
-                        bid_id, bid, coin_to, txid, index, found["height"]
-                    )
-
-                    # Only update tx state if tx hasn't already been seen
+                if coin_to == Coins.NAV:
+                    # txids of BLSCT changes after aggregation; track by outid instead
+                    if bid.participate_tx.conf != found["depth"]:
+                        save_bid = True
                     if (
-                        bid.participate_tx.state is None
-                        or bid.participate_tx.state < TxStates.TX_SENT
+                        bid.participate_tx.conf is None
+                        and bid.participate_tx.state != TxStates.TX_SENT
                     ):
+                        outid = found.get("outid", "")
+                        self.log.debug(
+                            f"Found bid {self.log.id(bid_id)} participate txn (outid={outid}) in chain {ci_to.coin_name()}."
+                        )
+                        if outid:
+                            bid.participate_tx.outid = bytes.fromhex(outid)
+                        bid.participate_tx.chain_height = self.setLastHeightCheckedStart(coin_to, found["height"])
                         bid.setPTxState(TxStates.TX_SENT)
-
+                        save_bid = True
+                else:
+                    index = found.get("index", participate_txvout)
+                    if bid.participate_tx.conf != found["depth"]:
+                        save_bid = True
+                    if (
+                        bid.participate_tx.conf is None
+                        and bid.participate_tx.state != TxStates.TX_SENT
+                    ):
+                        txid = found.get(
+                            "txid",
+                            None if participate_txid is None else participate_txid.hex(),
+                        )
+                        self.log.debug(
+                            f"Found bid {self.log.id(bid_id)} participate txn {self.log.id(txid)} in chain {ci_to.coin_name()}."
+                        )
+                        self.addParticipateTxn(
+                            bid_id, bid, coin_to, txid, index, found["height"]
+                        )
+                        # Only update tx state if tx hasn't already been seen
+                        if (
+                            bid.participate_tx.state is None
+                            or bid.participate_tx.state < TxStates.TX_SENT
+                        ):
+                            bid.setPTxState(TxStates.TX_SENT)
                 bid.participate_tx.conf = found["depth"]
                 if found["height"] > 0 and bid.participate_tx.block_height is None:
                     self.setTxBlockInfoFromHeight(
@@ -6977,8 +7012,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     )
 
             if bid.participate_tx.conf is not None:
+                ptx_id = bid.participate_tx.outid if coin_to == Coins.NAV else bid.participate_tx.txid
                 self.log.debug(
-                    f"participate txid {self.log.id(bid.participate_tx.txid)} confirms {bid.participate_tx.conf}."
+                    f"participate txid {self.log.id(ptx_id)} confirms {bid.participate_tx.conf}."
                 )
                 if (
                     bid.participate_tx.conf
