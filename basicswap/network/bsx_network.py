@@ -203,7 +203,7 @@ class BSXNetwork:
                 self.callrpc(
                     "smsgimportprivkey", [self.network_key, "basicswap offers"]
                 )
-                ro = self.callrpc("smsglocalkeys", ["anon", "-", self.network_addr])
+                ro = self.callrpc("smsglocalkeys", ["anon", "+", self.network_addr])
                 ensure(ro["result"] == "Success.", "smsglocalkeys failed")
         else:
             now = self.getTime()
