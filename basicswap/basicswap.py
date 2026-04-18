@@ -6923,7 +6923,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 # bid.participate_tx.script is a CSV-based fake script; use getParticipateLockValue
                 # to derive the actual CLTV absolute locktime used in the real NAV BLSCT HTLC.
                 lock_value = ci_to.getParticipateLockValue(bid, offer, bid_id, self.ci(offer.coin_from))
-                found = ci_to.getLockTxHeight(
+                found = ci_to.getNavLockTxHeight(
                     participate_txid,
                     secret_hash.hex(),
                     bid.amount_to,

@@ -278,7 +278,7 @@ class NAVInterface(BTCInterface):
         # difference between redeem and refund transactions are small
         return 1336
 
-    def getLockTxHeight(
+    def getNavLockTxHeight(
         self,
         txid,
         dest_address,
