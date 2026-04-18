@@ -5319,6 +5319,25 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 "blinding_key": f"{blinding_key:064x}",
             }
             ci.importBlsctScript(params, rescan=False)
+            # Build payload so initiateTxnConfirmed can notify the offer creator
+            # to import the HTLC script before the PTX is broadcast, allowing
+            # rescan=False on the server side.
+            # Encoding (after msg_type byte): bid_id(28B) + blinding_key(32B) +
+            #   lock_value(4B) + addr_a_len(1B) + addr_a + addr_b_len(1B) + addr_b
+            addr_a_bytes = nav_addr_redeem.encode()
+            addr_b_bytes = nav_addr_refund.encode()
+            blinding_key_bytes = blinding_key.to_bytes(32, "big")
+            lock_value_bytes = lock_value.to_bytes(4, "big")
+            nav_ptx_import_payload = (
+                format(int(MessageTypes.NAV_PTX_IMPORT), "02x")
+                + bid_id.hex()
+                + blinding_key_bytes.hex()
+                + lock_value_bytes.hex()
+                + format(len(addr_a_bytes), "02x")
+                + addr_a_bytes.hex()
+                + format(len(addr_b_bytes), "02x")
+                + addr_b_bytes.hex()
+            )
             chain_height = ci.getChainHeight()
             self.addParticipateTxn(bid_id, bid, coin_to, txid, vout_index, chain_height)
             bid.participate_tx.script = participate_script
@@ -5326,7 +5345,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             bid.participate_tx.tx_data_funded = bytes.fromhex(txn_funded)
             prevout_info = ci.getPrevOutInfoFromOffChainTxn(txn_funded, secret_hash)
             bid.participate_tx.outid = bytes.fromhex(prevout_info["outid"])
-            return txn_signed
+            return txn_signed, nav_ptx_import_payload
 
         if ci.using_segwit():
             p2wsh = ci.getScriptDest(participate_script)
@@ -5358,7 +5377,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         bid.participate_tx.script = participate_script
         bid.participate_tx.tx_data = bytes.fromhex(txn_signed)
 
-        return txn_signed
+        return txn_signed, None
 
     def createRedeemTxn(
         self,
@@ -5810,7 +5829,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 )
 
                 ci_to = self.ci(offer.coin_to)
-                txn = self.createParticipateTxn(bid_id, bid, offer, participate_script)
+                txn, nav_ptx_import_payload = self.createParticipateTxn(bid_id, bid, offer, participate_script)
+                if nav_ptx_import_payload is not None:
+                    self.sendMessage(bid.bid_addr, offer.addr_from, nav_ptx_import_payload, self.SMSG_SECONDS_IN_HOUR * 2, None)
+                    self.log.info(f"Sent NAV_PTX_IMPORT to offer creator for bid {self.log.id(bid_id)}")
                 txid = ci_to.publishTx(bytes.fromhex(txn))
                 self.log.debug(
                     f"Submitted participate tx {self.log.id(txid)} to {ci_to.coin_name()} chain for bid {self.log.id(bid_id)}"
@@ -5951,6 +5973,50 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         self.log.info(f"Redeeming ITX for bid {self.log.id(bid_id)} in {delay} seconds.")
         self.createAction(delay, ActionTypes.REDEEM_ITX, bid_id)
         self.saveBid(bid_id, bid)
+
+    def processNavPtxImport(self, msg) -> None:
+        """Receive NAV PTX BLSCT HTLC params from bidder.
+        Imports the HTLC script into the offer creator's NAV wallet so
+        getLockTxHeight can find the PTX via listblsctunspent."""
+        self.log.debug(f"processNavPtxImport from {msg['from']}")
+        msg_bytes = self.getSmsgMsgBytes(msg)
+        offset = 0
+
+        bid_id = msg_bytes[offset: offset + 28]
+        offset += 28
+        blinding_key = int.from_bytes(msg_bytes[offset: offset + 32], "big")
+        offset += 32
+        lock_value = int.from_bytes(msg_bytes[offset: offset + 4], "big")
+        offset += 4
+        addr_a_len = msg_bytes[offset]
+        offset += 1
+        nav_addr_redeem = msg_bytes[offset: offset + addr_a_len].decode()
+        offset += addr_a_len
+        addr_b_len = msg_bytes[offset]
+        offset += 1
+        nav_addr_refund = msg_bytes[offset: offset + addr_b_len].decode()
+
+        self.log.info(f"processNavPtxImport: bid {self.log.id(bid_id)}, {nav_addr_redeem=}, {lock_value=}")
+        bid, offer = self.getBidAndOffer(bid_id)
+        if bid is None or not bid.was_received:
+            self.log.warning(f"processNavPtxImport: bid {self.log.id(bid_id)} not found or not received")
+            return
+        if bid.initiate_tx is None:
+            self.log.warning(f"processNavPtxImport: bid {self.log.id(bid_id)} has no initiate_tx yet")
+            return
+
+        secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
+        params = {
+            "type": "atomic_swap",
+            "address_a": nav_addr_redeem,
+            "address_b": nav_addr_refund,
+            "hash": secret_hash.hex(),
+            "locktime": lock_value,
+            "blinding_key": f"{blinding_key:064x}",
+        }
+        ci_nav = self.ci(Coins.NAV)
+        ci_nav.importBlsctScript(params, rescan=False)
+        self.log.info(f"Imported NAV PTX HTLC script for bid {self.log.id(bid_id)}")
 
     def getTotalBalance(self, coin_type) -> int:
         try:
@@ -11113,6 +11179,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 self.processPortalMessage(msg)
             elif msg_type == MessageTypes.NAV_SECRET_REVEAL:
                 self.processNavSecretReveal(msg)
+            elif msg_type == MessageTypes.NAV_PTX_IMPORT:
+                self.processNavPtxImport(msg)
 
         except InactiveCoin as ex:
             self.log.debug(
