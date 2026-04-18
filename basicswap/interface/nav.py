@@ -63,25 +63,6 @@ class NAVInterface(BTCInterface):
         self._log.info(f"---> Created raw funded transaction")
         return txn_funded
 
-    def _extractHTLCLocktime(self, script: bytes, is_nav: bool) -> int:
-        """
-        >>> hex = "6382012088a820b812e53d1bd15a928803df44ab86c6a286d9a3d6625a3738f"
-        >>> hex += "bed32d89a4c7c178830a7b9a59a0e305eef4f756909e6fa107091fc6d2b2743"
-        >>> hex += "3d110d5d3c95ff987a0182bbd2e19897ee71af0466006cc2755467042c688b6"
-        >>> hex += "9b17530a7b9a59a0e305eef4f756909e6fa107091fc6d2b27433d110d5d3c95"
-        >>> hex += "ff987a0182bbd2e19897ee71af0466006cc2755468b3"
-        >>> b = bytes.fromhex(hex)
-        >>> nav = NAVInterface()
-        >>> nav._extractHTLCLocktime(b, is_nav=True)
-        1770743852
-        """
-        if is_nav:
-            locktime_bytes = script[91:95]
-        else:
-            push_size = script[64]
-            locktime_bytes = script[65:65 + push_size]
-        return int.from_bytes(locktime_bytes, byteorder='little')
-
     def createFakeNonNavHTLCScript(self, secret_hash: bytearray, locktime: int) -> bytearray:
         """
         Create a non-NAV HTLC script with zeroed-out fields,
@@ -241,6 +222,25 @@ class NAVInterface(BTCInterface):
     #     del script
     #     return "tnv14adxpa06t5fywwtte3g223ef92plxqm7ls2jxqp5rwef2cz7ppdhx36ck0e42x2dkj92vw3kxfj90zpzy8ymnmqd9x9gc5wq2xv6m5rkxcxz39jpvaan4dw254ayl94h5tuy5pftaczhcrr5exz9ke0cdgr75y6ft5"
 
+    def extractHTLCLocktime(self, script: bytes, is_nav: bool) -> int:
+        """
+        >>> hex = "6382012088a820b812e53d1bd15a928803df44ab86c6a286d9a3d6625a3738f"
+        >>> hex += "bed32d89a4c7c178830a7b9a59a0e305eef4f756909e6fa107091fc6d2b2743"
+        >>> hex += "3d110d5d3c95ff987a0182bbd2e19897ee71af0466006cc2755467042c688b6"
+        >>> hex += "9b17530a7b9a59a0e305eef4f756909e6fa107091fc6d2b27433d110d5d3c95"
+        >>> hex += "ff987a0182bbd2e19897ee71af0466006cc2755468b3"
+        >>> b = bytes.fromhex(hex)
+        >>> nav = NAVInterface()
+        >>> nav.extractHTLCLocktime(b, is_nav=True)
+        1770743852
+        """
+        if is_nav:
+            locktime_bytes = script[91:95]
+        else:
+            push_size = script[64]
+            locktime_bytes = script[65:65 + push_size]
+        return int.from_bytes(locktime_bytes, byteorder='little')
+
     # TODO NAV remove this after getblock 2 issue is fixed
     def getBlockWithTxns(self, block_hash: str):
         # naviod crashes with getblock with verbosity 2 (MoneyRange bug),
@@ -305,7 +305,7 @@ class NAVInterface(BTCInterface):
                 if not self.isHTLCScript(utxo_spk):
                     continue
                 spk_secret_hash = atomic_swap_1.extractScriptSecretHash(bytes.fromhex(utxo_spk)).hex()
-                spk_locktime = self._extractHTLCLocktime(bytes.fromhex(utxo_spk), is_nav=True)
+                spk_locktime = self.extractHTLCLocktime(bytes.fromhex(utxo_spk), is_nav=True)
 
                 if spk_secret_hash == secret_hash and spk_locktime == locktime:
                     confirmations = utxo.get("confirmations", 0)
@@ -316,10 +316,10 @@ class NAVInterface(BTCInterface):
                         "depth": confirmations,
                         "height": block_height,
                     }
-                    self._log.debug(f"getLockTxHeight found HTLC via listblsctunspent: {rv}")
+                    self._log.info(f"getLockTxHeight found HTLC via listblsctunspent: {rv}")
                     return rv
         except Exception as e:
-            self._log.debug(f"getLockTxHeight listblsctunspent search failed: {e}")
+            self._log.error(f"getLockTxHeight listblsctunspent search failed: {e}")
 
         return None
 
@@ -508,7 +508,7 @@ class NAVInterface(BTCInterface):
     # TODO NAV write test
     def isHTLCTxnSpent(self, script: bytes) -> bool:
         secret_hash = atomic_swap_1.extractScriptSecretHash(script)
-        locktime = self._extractHTLCLocktime(script, is_nav=False)
+        locktime = self.extractHTLCLocktime(script, is_nav=False)
         self._log.debug(f"isHTLCTxnSpent: secret_hash={secret_hash.hex()} {locktime=} script={script.hex()}")
         try:
             utxos = self.listBlsctUnspent(min_conf=0)
@@ -518,7 +518,7 @@ class NAVInterface(BTCInterface):
                     continue
                 spk_bytes = bytes.fromhex(spk)
                 spk_secret_hash = atomic_swap_1.extractScriptSecretHash(spk_bytes)
-                spk_locktime = self._extractHTLCLocktime(spk_bytes, is_nav=True)
+                spk_locktime = self.extractHTLCLocktime(spk_bytes, is_nav=True)
                 if secret_hash == spk_secret_hash and locktime == spk_locktime:
                     self._log.debug(f"isHTLCTxnSpent: fonund matching utxo. not spent yet: {utxo=}")
                     return False
