@@ -6920,7 +6920,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             )
             if coin_to == Coins.NAV:
                 secret_hash = atomic_swap_1.extractScriptSecretHash(bid.participate_tx.script)
-                lock_value = ci_to._extractHTLCLocktime(bytes(bid.participate_tx.script), is_nav=False)
+                # bid.participate_tx.script is a CSV-based fake script; use getParticipateLockValue
+                # to derive the actual CLTV absolute locktime used in the real NAV BLSCT HTLC.
+                lock_value = ci_to.getParticipateLockValue(bid, offer, bid_id, self.ci(offer.coin_from))
                 found = ci_to.getLockTxHeight(
                     participate_txid,
                     secret_hash.hex(),
