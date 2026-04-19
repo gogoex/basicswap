@@ -6012,9 +6012,12 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             tx_data_funded_bytes = None
 
         self.log.info(f"processNavPtxImport: bid {self.log.id(bid_id)}, {nav_addr_redeem=}, {lock_value=}")
-        bid, offer = self.getBidAndOffer(bid_id)
-        if bid is None or not bid.was_received:
-            self.log.warning(f"processNavPtxImport: bid {self.log.id(bid_id)} not found or not received")
+        if bid_id not in self.swaps_in_progress:
+            self.log.warning(f"processNavPtxImport: bid {self.log.id(bid_id)} not in progress")
+            return
+        bid = self.swaps_in_progress[bid_id][0]
+        if not bid.was_received:
+            self.log.warning(f"processNavPtxImport: bid {self.log.id(bid_id)} not received bid")
             return
         if bid.initiate_tx is None:
             self.log.warning(f"processNavPtxImport: bid {self.log.id(bid_id)} has no initiate_tx yet")
