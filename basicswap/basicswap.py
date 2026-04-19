@@ -5351,7 +5351,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             bid.participate_tx.tx_data = bytes.fromhex(txn_signed)
             bid.participate_tx.tx_data_funded = bytes.fromhex(txn_funded)
             prevout_info = ci.getPrevOutInfoFromOffChainTxn(txn_funded, secret_hash)
-            bid.participate_tx.outid = bytes.fromhex(prevout_info["outid"])
+            bid.participate_tx.txid = bytes.fromhex(prevout_info["outid"])
             return txn_signed, nav_ptx_import_payload
 
         if ci.using_segwit():
@@ -6965,7 +6965,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 )
             if found:
                 if coin_to == Coins.NAV:
-                    # txids of BLSCT changes after aggregation; track by outid instead
+                    # since txid changes after aggregation, track by outid instead
                     if bid.participate_tx.conf != found["depth"]:
                         save_bid = True
                     if (
@@ -6977,7 +6977,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                             f"Found bid {self.log.id(bid_id)} participate txn (outid={outid}) in chain {ci_to.coin_name()}."
                         )
                         if outid:
-                            bid.participate_tx.outid = bytes.fromhex(outid)
+                            bid.participate_tx.txid = bytes.fromhex(outid)
                         bid.participate_tx.chain_height = self.setLastHeightCheckedStart(coin_to, found["height"])
                         bid.setPTxState(TxStates.TX_SENT)
                         save_bid = True
@@ -7012,7 +7012,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     )
 
             if bid.participate_tx.conf is not None:
-                ptx_id = bid.participate_tx.outid if coin_to == Coins.NAV else bid.participate_tx.txid
+                ptx_id = bid.participate_tx.txid
                 self.log.debug(
                     f"participate txid {self.log.id(ptx_id)} confirms {bid.participate_tx.conf}."
                 )
