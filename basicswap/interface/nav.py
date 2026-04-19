@@ -29,6 +29,13 @@ class NAVInterface(BTCInterface):
 
     def __init__(self, coin_settings, network, swap_client=None):
         super(NAVInterface, self).__init__(coin_settings, network, swap_client)
+        self._ptx_data_funded: dict = {}
+
+    def stashPtxDataFunded(self, bid_id: bytes, tx_data_funded: bytes) -> None:
+        self._ptx_data_funded[bid_id] = tx_data_funded
+
+    def popPtxDataFunded(self, bid_id: bytes) -> bytes | None:
+        return self._ptx_data_funded.pop(bid_id, None)
 
     def checkExpectedSeed(self, expect_seedid: str) -> bool:
         actual_seedid = self.getWalletSeedID()

@@ -5429,7 +5429,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         if coin_type == Coins.NAV:
             secret_hash = atomic_swap_1.extractScriptSecretHash(txn_script)
-            prevout = ci.getPrevOutInfoFromOffChainTxn(bid.participate_tx.tx_data_funded.hex(), secret_hash)
+            tx_data_funded = bid.participate_tx.tx_data_funded or ci.popPtxDataFunded(bid.bid_id)
+            prevout = ci.getPrevOutInfoFromOffChainTxn(tx_data_funded.hex(), secret_hash)
             prevout["amount"] = ci.make_int(prevout["amount"])
             self.log.debug(f"---> {prevout=}")
         else:
@@ -5854,6 +5855,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 tx_type=TxTypes.PTX,
                 script=participate_script,
             )
+            if coin_to == Coins.NAV:
+                tx_data = self.ci(coin_to).popPtxDataFunded(bid_id)
+                if tx_data is not None:
+                    bid.participate_tx.tx_data_funded = tx_data
             ci = self.ci(offer.coin_to)
             if ci.watch_blocks_for_scripts() is True:
                 chain_a_block_header = self.ci(
@@ -6036,9 +6041,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         ci_nav.importBlsctScript(params, rescan=False)
         self.log.info(f"Imported NAV PTX HTLC script for bid {self.log.id(bid_id)}")
         if tx_data_funded_bytes is not None:
-            bid.participate_tx.tx_data_funded = tx_data_funded_bytes
-            self.saveBid(bid_id, bid)
-            self.log.info(f"Stored NAV PTX tx_data_funded for bid {self.log.id(bid_id)}")
+            ci_nav.stashPtxDataFunded(bid_id, tx_data_funded_bytes)
+            self.log.info(f"Stashed NAV PTX tx_data_funded for bid {self.log.id(bid_id)}")
 
     def getTotalBalance(self, coin_type) -> int:
         try:
