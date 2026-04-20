@@ -174,6 +174,7 @@ class BidAcceptMessage(NonProtobufClass):
         3: ("contract_script", NPBW_BYTES, 0),
         4: ("pkhash_seller", NPBW_BYTES, 0),
         5: ("seller_contract_pubkey", NPBW_BYTES, 0),
+        6: ("nav_ptx_redeem_addr", NPBW_BYTES, NPBF_STR),
     }
 
 

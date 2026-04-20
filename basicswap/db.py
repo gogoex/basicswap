@@ -13,7 +13,7 @@ from enum import IntEnum, auto
 from typing import Optional
 
 
-CURRENT_DB_VERSION = 32
+CURRENT_DB_VERSION = 33  # TODO NAV: bumped from 32 to 33 for nav_ptx_redeem_addr; bump again when rebasing to master
 CURRENT_DB_DATA_VERSION = 7
 
 
@@ -261,6 +261,7 @@ class Bid(Table):
 
     buyer_contract_pubkey = Column("blob")   # Buyer's contract pubkey for ECDH (set from BidMessage)
     seller_contract_pubkey = Column("blob")  # Seller's contract pubkey for ECDH (set from BidAcceptMessage)
+    nav_ptx_redeem_addr = Column("string")   # NAV: server's address for PTX address_a (if-branch); server owns it so it can derive spending_key
 
     reject_code = Column("integer")
 

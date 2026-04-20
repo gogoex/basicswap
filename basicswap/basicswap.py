@@ -4027,6 +4027,12 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 if Coins(offer.coin_to) == Coins.NAV:
                     self.log.info(f"---> acceptBid: {pubkey_refund=}")
                     msg_buf.seller_contract_pubkey = pubkey_refund
+                    # Allocate from server's NAV wallet so deriveSpendingKey succeeds at PTX redeem time
+                    nav_ptx_redeem_addr = self.getReceiveAddressFromPool(
+                        Coins(offer.coin_to), bid_id, TxTypes.PTX_REDEEM, use_cursor
+                    )
+                    msg_buf.nav_ptx_redeem_addr = nav_ptx_redeem_addr
+                    bid.nav_ptx_redeem_addr = nav_ptx_redeem_addr
 
                 self.log.info(f"---> acceptBid: msg_buf={vars(msg_buf)}")
                 bid_bytes = msg_buf.to_bytes()
@@ -5292,7 +5298,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         if coin_to == Coins.NAV:
             secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
-            nav_addr_redeem = self.getReceiveAddressFromPool(coin_to, bid_id, TxTypes.PTX_REDEEM, None)
+            nav_addr_redeem = bid.nav_ptx_redeem_addr
+            ensure(nav_addr_redeem is not None, "NAV PTX redeem address not set; server must send nav_ptx_redeem_addr in BID_ACCEPT")
             nav_addr_refund = self.getReceiveAddressFromPool(coin_to, bid_id, TxTypes.PTX_REFUND, None)
             bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
             buyer_privkey = self.getContractPrivkey(bid_date, bid.contract_count)
@@ -5432,6 +5439,11 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             tx_data_funded = bid.participate_tx.tx_data_funded or ci.popPtxDataFunded(bid.bid_id)
             prevout = ci.getPrevOutInfoFromOffChainTxn(tx_data_funded.hex(), secret_hash)
             prevout["amount"] = ci.make_int(prevout["amount"])
+            prevout["outid"] = bid.participate_tx.txid.hex()  # stable on-chain outid (survives BLSCT aggregation)
+            blinding_key_int = ci.deriveBlindingKey(privkey, bid.buyer_contract_pubkey)
+            prevout["spending_key"] = ci.deriveSpendingKey(
+                f"{blinding_key_int:064x}", bid.nav_ptx_redeem_addr
+            )
             self.log.debug(f"---> {prevout=}")
         else:
             prevout = {
@@ -6040,9 +6052,14 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         ci_nav = self.ci(Coins.NAV)
         ci_nav.importBlsctScript(params, rescan=False)
         self.log.info(f"Imported NAV PTX HTLC script for bid {self.log.id(bid_id)}")
-        if tx_data_funded_bytes is not None:
-            ci_nav.stashPtxDataFunded(bid_id, tx_data_funded_bytes)
-            self.log.info(f"Stashed NAV PTX tx_data_funded for bid {self.log.id(bid_id)}")
+        ensure(tx_data_funded_bytes is not None, "NAV_PTX_IMPORT missing tx_data_funded")
+        ci_nav.stashPtxDataFunded(bid_id, tx_data_funded_bytes)
+        self.log.info(f"Stashed NAV PTX tx_data_funded for bid {self.log.id(bid_id)}")
+        ensure(bid.participate_tx is not None, "NAV_PTX_IMPORT received but participate_tx not yet created")
+        ensure(bid.participate_tx.tx_data_funded is None, "NAV PTX tx_data_funded already set")
+        bid.participate_tx.tx_data_funded = tx_data_funded_bytes
+        self.saveBid(bid_id, bid)
+        self.log.info(f"Persisted NAV PTX tx_data_funded to DB for bid {self.log.id(bid_id)}")
 
     def getTotalBalance(self, coin_type) -> int:
         try:
@@ -9049,6 +9066,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         if Coins(offer.coin_to) == Coins.NAV:
             bid.seller_contract_pubkey = bid_accept_data.seller_contract_pubkey
+            if hasattr(bid_accept_data, "nav_ptx_redeem_addr"):
+                bid.nav_ptx_redeem_addr = bid_accept_data.nav_ptx_redeem_addr
 
         bid.setState(BidStates.BID_ACCEPTED)
         bid.setITxState(TxStates.TX_NONE)

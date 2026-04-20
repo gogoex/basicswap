@@ -218,6 +218,11 @@ class NAVInterface(BTCInterface):
         blinding_key_bytes = sha256(ecdh_secret)
         return int.from_bytes(blinding_key_bytes, "big")
 
+    def deriveSpendingKey(self, blinding_key_hex: str, address: str) -> str:
+        """Derive the private spending key for a BLSCT HTLC output.
+        Uses rpc_wallet because the address must be owned by this wallet."""
+        return self.rpc_wallet("deriveblsctspendingkey", [blinding_key_hex, address])
+
     def describeTx(self, tx_hex: str):
         # tx_hex is expected to be sigined
         # for txs before signing, use decodeblsctrawtransaction
