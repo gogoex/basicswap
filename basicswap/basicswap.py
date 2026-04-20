@@ -5855,8 +5855,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 tx_type=TxTypes.PTX,
                 script=participate_script,
             )
-            if coin_to == Coins.NAV:
-                tx_data = self.ci(coin_to).popPtxDataFunded(bid_id)
+            if Coins(offer.coin_to) == Coins.NAV:
+                tx_data = self.ci(offer.coin_to).popPtxDataFunded(bid_id)
                 if tx_data is not None:
                     bid.participate_tx.tx_data_funded = tx_data
             ci = self.ci(offer.coin_to)
