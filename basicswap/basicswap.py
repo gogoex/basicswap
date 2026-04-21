@@ -8923,7 +8923,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             bid.proof_address = bid_data.proof_address
         if Coins(offer.coin_from) == Coins.NAV:
             bid.buyer_contract_pubkey = bid_data.buyer_contract_pubkey
-            if hasattr(bid_data, "nav_redeem_addr"):
+            if bid_data.nav_redeem_addr:
                 bid.nav_redeem_addr = bid_data.nav_redeem_addr
 
         bid.setState(BidStates.BID_RECEIVED)
@@ -9083,7 +9083,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         if Coins(offer.coin_to) == Coins.NAV:
             bid.seller_contract_pubkey = bid_accept_data.seller_contract_pubkey
-            if hasattr(bid_accept_data, "nav_redeem_addr"):
+            if bid_accept_data.nav_redeem_addr:
                 bid.nav_redeem_addr = bid_accept_data.nav_redeem_addr
 
         bid.setState(BidStates.BID_ACCEPTED)
