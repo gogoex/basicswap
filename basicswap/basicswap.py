@@ -3913,12 +3913,11 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
                 if coin_from == Coins.NAV:
                     bid_id = bid.bid_id
-                    nav_addr_redeem = self.getReceiveAddressFromPool(
-                        coin_from, bid_id, TxTypes.ITX_REDEEM, use_cursor
-                    )
+                    ensure(bid.nav_redeem_addr is not None, "NAV ITX redeem address not set; bidder must send nav_redeem_addr in BID")
+                    nav_addr_redeem = bid.nav_redeem_addr  # bidder's address (NAV receiver, if-branch)
                     nav_addr_refund = self.getReceiveAddressFromPool(
                         coin_from, bid_id, TxTypes.ITX_REFUND, use_cursor
-                    )
+                    )  # server's address (NAV sender, else-branch)
                     # Derive blinding key via ECDH
                     seller_privkey = self.getContractPrivkey(bid_date, bid.contract_count)
                     buyer_pubkey = bid.buyer_contract_pubkey
@@ -4028,11 +4027,11 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     self.log.info(f"---> acceptBid: {pubkey_refund=}")
                     msg_buf.seller_contract_pubkey = pubkey_refund
                     # Allocate from server's NAV wallet so deriveSpendingKey succeeds at PTX redeem time
-                    nav_ptx_redeem_addr = self.getReceiveAddressFromPool(
+                    nav_redeem_addr = self.getReceiveAddressFromPool(
                         Coins(offer.coin_to), bid_id, TxTypes.PTX_REDEEM, use_cursor
                     )
-                    msg_buf.nav_ptx_redeem_addr = nav_ptx_redeem_addr
-                    bid.nav_ptx_redeem_addr = nav_ptx_redeem_addr
+                    msg_buf.nav_redeem_addr = nav_redeem_addr
+                    bid.nav_redeem_addr = nav_redeem_addr
 
                 self.log.info(f"---> acceptBid: msg_buf={vars(msg_buf)}")
                 bid_bytes = msg_buf.to_bytes()
@@ -4268,6 +4267,11 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         if Coins(offer.coin_from) == Coins.NAV:
             bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
             msg_buf.buyer_contract_pubkey = self.getContractPubkey(bid_date, bid.contract_count)
+            # Bidder is the NAV receiver; allocate address_a from bidder's wallet so
+            # bidder can later derive spending_key for the ITX redeem.
+            if bid.nav_redeem_addr is None:
+                bid.nav_redeem_addr = self.getReceiveAddressForCoin(Coins.NAV)
+            msg_buf.nav_redeem_addr = bid.nav_redeem_addr
 
         return msg_buf
 
@@ -5298,8 +5302,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         if coin_to == Coins.NAV:
             secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
-            nav_addr_redeem = bid.nav_ptx_redeem_addr
-            ensure(nav_addr_redeem is not None, "NAV PTX redeem address not set; server must send nav_ptx_redeem_addr in BID_ACCEPT")
+            nav_addr_redeem = bid.nav_redeem_addr
+            ensure(nav_addr_redeem is not None, "NAV redeem address not set; server must send nav_redeem_addr in BID_ACCEPT")
             nav_addr_refund = self.getReceiveAddressFromPool(coin_to, bid_id, TxTypes.PTX_REFUND, None)
             bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
             buyer_privkey = self.getContractPrivkey(bid_date, bid.contract_count)
@@ -5440,9 +5444,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             prevout = ci.getPrevOutInfoFromOffChainTxn(tx_data_funded.hex(), secret_hash)
             prevout["amount"] = ci.make_int(prevout["amount"])
             prevout["outid"] = bid.participate_tx.txid.hex()  # stable on-chain outid (survives BLSCT aggregation)
-            blinding_key_int = ci.deriveBlindingKey(privkey, bid.buyer_contract_pubkey)
+            remote_pubkey = bid.buyer_contract_pubkey if bid.was_received else bid.seller_contract_pubkey
+            blinding_key_int = ci.deriveBlindingKey(privkey, remote_pubkey)
             prevout["spending_key"] = ci.deriveSpendingKey(
-                f"{blinding_key_int:064x}", bid.nav_ptx_redeem_addr
+                f"{blinding_key_int:064x}", bid.nav_redeem_addr
             )
             self.log.debug(f"---> {prevout=}")
         else:
@@ -5619,6 +5624,16 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             # txn is a funded transaction, not yet on-chain
             prevout = ci.getPrevOutInfoFromOffChainTxn(txn, secret_hash)
             prevout["amount"] = ci.make_int(prevout["amount"])
+            # address_a is the NAV receiver's address; the NAV sender's wallet returns
+            # spending_key='' from decodeblsctrawtransaction for that output.
+            # Derive the NAV sender's spending_key via address_b (addr_refund_out) instead.
+            bid_date_nav = dt.datetime.fromtimestamp(bid.created_at).date()
+            local_privkey = self.getContractPrivkey(bid_date_nav, bid.contract_count)
+            remote_pubkey = bid.buyer_contract_pubkey if bid.was_received else bid.seller_contract_pubkey
+            blinding_key_int = ci.deriveBlindingKey(local_privkey, remote_pubkey)
+            prevout["spending_key"] = ci.deriveSpendingKey(
+                f"{blinding_key_int:064x}", addr_refund_out
+            )
             self.log.info(f"---> got NAV {prevout=}")
         else:
             # TODO: Sign in bsx for all coins
@@ -8908,6 +8923,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             bid.proof_address = bid_data.proof_address
         if Coins(offer.coin_from) == Coins.NAV:
             bid.buyer_contract_pubkey = bid_data.buyer_contract_pubkey
+            if hasattr(bid_data, "nav_redeem_addr"):
+                bid.nav_redeem_addr = bid_data.nav_redeem_addr
 
         bid.setState(BidStates.BID_RECEIVED)
         try:
@@ -9066,8 +9083,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         if Coins(offer.coin_to) == Coins.NAV:
             bid.seller_contract_pubkey = bid_accept_data.seller_contract_pubkey
-            if hasattr(bid_accept_data, "nav_ptx_redeem_addr"):
-                bid.nav_ptx_redeem_addr = bid_accept_data.nav_ptx_redeem_addr
+            if hasattr(bid_accept_data, "nav_redeem_addr"):
+                bid.nav_redeem_addr = bid_accept_data.nav_redeem_addr
 
         bid.setState(BidStates.BID_ACCEPTED)
         bid.setITxState(TxStates.TX_NONE)
