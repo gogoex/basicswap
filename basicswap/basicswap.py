@@ -5413,7 +5413,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         self.log.debug(f"---> bid.amount_to={bid.amount_to}, bid.amount={bid.amount}")
 
         if for_txn_type == "participate":
-            prev_txnid = bid.participate_tx.txid.hex()
+            # For NAV, txid may be None until the on-chain outid is resolved via listblsctunspent;
+            # prev_txnid is not used in the NAV branch so a None value is safe there.
+            prev_txnid = bid.participate_tx.txid.hex() if bid.participate_tx.txid is not None else None
             prev_n = bid.participate_tx.vout
             txn_script = bid.participate_tx.script
             prev_amount = bid.amount_to
@@ -5439,11 +5441,29 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         ensure(len(secret) == 32, "Bad secret length")
 
         if coin_type == Coins.NAV:
+            self.log.info(
+                f"createRedeemTxn NAV: bid {self.log.id(bid.bid_id)}, "
+                f"participate_tx.txid={'None' if bid.participate_tx.txid is None else bid.participate_tx.txid.hex()}, "
+                f"participate_tx.tx_data_funded={'None' if bid.participate_tx.tx_data_funded is None else f'{len(bid.participate_tx.tx_data_funded)}B'}, "
+                f"stash={'present' if ci._ptx_data_funded.get(bid.bid_id) is not None else 'None'}"
+            )
             secret_hash = atomic_swap_1.extractScriptSecretHash(txn_script)
             tx_data_funded = bid.participate_tx.tx_data_funded or ci.popPtxDataFunded(bid.bid_id)
+            if tx_data_funded is None:
+                # Fallback: reload from DB in case the in-memory value was lost (e.g. after restart)
+                self.log.warning(f"createRedeemTxn: tx_data_funded not in memory for bid {self.log.id(bid.bid_id)}, reloading from DB")
+                db_bid = self.getBid(bid.bid_id)
+                if db_bid and db_bid.participate_tx:
+                    tx_data_funded = db_bid.participate_tx.tx_data_funded
+            ensure(tx_data_funded is not None, f"NAV PTX tx_data_funded not available for bid {bid.bid_id.hex()}")
             prevout = ci.getPrevOutInfoFromOffChainTxn(tx_data_funded.hex(), secret_hash)
             prevout["amount"] = ci.make_int(prevout["amount"])
-            prevout["outid"] = bid.participate_tx.txid.hex()  # stable on-chain outid (survives BLSCT aggregation)
+            # Use the stable on-chain outid (survives BLSCT aggregation) when available.
+            # Falls back to the off-chain outputHash from getPrevOutInfoFromOffChainTxn
+            # when listblsctunspent does not yet expose an "outid"/"outputHash" field (e.g. rc15).
+            if bid.participate_tx.txid is not None:
+                prevout["outid"] = bid.participate_tx.txid.hex()
+            # else: prevout["outid"] already set from getPrevOutInfoFromOffChainTxn
             remote_pubkey = bid.buyer_contract_pubkey if bid.was_received else bid.seller_contract_pubkey
             blinding_key_int = ci.deriveBlindingKey(privkey, remote_pubkey)
             prevout["spending_key"] = ci.deriveSpendingKey(
@@ -5964,6 +5984,14 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
     def participateTxnConfirmed(self, bid_id: bytes, bid, offer) -> None:
         self.log.debug(f"participateTxnConfirmed for bid {self.log.id(bid_id)}")
+        if Coins(offer.coin_to) == Coins.NAV:
+            ptx = bid.participate_tx
+            self.log.info(
+                f"participateTxnConfirmed NAV: bid {self.log.id(bid_id)}, "
+                f"ptx.txid={'None' if ptx is None or ptx.txid is None else ptx.txid.hex()}, "
+                f"ptx.tx_data_funded={'None' if ptx is None or ptx.tx_data_funded is None else f'{len(ptx.tx_data_funded)}B'}, "
+                f"ptx.conf={None if ptx is None else ptx.conf}"
+            )
 
         if bid.debug_ind == DebugTypes.DONT_CONFIRM_PTX:
             self.log.debug(f"Not confirming PTX for debugging {self.log.id(bid_id)}")
@@ -7012,8 +7040,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                         and bid.participate_tx.state != TxStates.TX_SENT
                     ):
                         outid = found.get("outid", "")
-                        self.log.debug(
-                            f"Found bid {self.log.id(bid_id)} participate txn (outid={outid}) in chain {ci_to.coin_name()}."
+                        self.log.info(
+                            f"Found bid {self.log.id(bid_id)} NAV participate txn in chain {ci_to.coin_name()}: "
+                            f"outid={outid!r}, depth={found.get('depth')}, height={found.get('height')}, "
+                            f"tx_data_funded={'None' if bid.participate_tx.tx_data_funded is None else f'{len(bid.participate_tx.tx_data_funded)}B'}"
                         )
                         if outid:
                             bid.participate_tx.txid = bytes.fromhex(outid)
