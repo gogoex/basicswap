@@ -5653,8 +5653,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             # Derive the NAV sender's spending_key via address_b (addr_refund_out) instead.
             bid_date_nav = dt.datetime.fromtimestamp(bid.created_at).date()
             local_privkey = self.getContractPrivkey(bid_date_nav, bid.contract_count)
-            remote_pubkey = bid.buyer_contract_pubkey if bid.was_received else bid.seller_contract_pubkey
-            blinding_key_int = ci.deriveBlindingKey(local_privkey, remote_pubkey)
+            ecdh_cpty_pubkey = bid.buyer_contract_pubkey if bid.was_received else bid.seller_contract_pubkey
+            blinding_key_int = ci.deriveBlindingKey(local_privkey, ecdh_cpty_pubkey)
             prevout["spending_key"] = ci.deriveSpendingKey(
                 f"{blinding_key_int:064x}", addr_refund_out
             )
@@ -6040,6 +6040,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         bid = self.swaps_in_progress[bid_id][0]
         bid.recovered_secret = secret
+        # NAV PTx was spent by the offerer to reveal the secret — mark it redeemed
+        if bid.participate_tx:
+            bid.setPTxState(TxStates.TX_REDEEMED)
         delay = self.get_short_delay_event_seconds()
         self.log.info(f"Redeeming ITX for bid {self.log.id(bid_id)} in {delay} seconds.")
         self.createAction(delay, ActionTypes.REDEEM_ITX, bid_id)
