@@ -171,6 +171,7 @@ def upgradeDatabase(self, db_version):
             "coin_a_lock_refund_spend_tx_msg_id",
             "coin_a_lock_spend_tx_msg_id",
         ),
+        (34, "bids", "nav_ptx_redeem_addr", "nav_redeem_addr"),
     ]
 
     expect_schema = extract_schema()

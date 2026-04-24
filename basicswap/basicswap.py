@@ -4264,14 +4264,17 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         if offer.smsg_payload_version is not None and offer.smsg_payload_version > 1:
             msg_buf.message_nets = self.getMessageNetsString()
 
+        bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
         if Coins(offer.coin_from) == Coins.NAV:
-            bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
-            msg_buf.buyer_contract_pubkey = self.getContractPubkey(bid_date, bid.contract_count)
+            msg_buf.seller_contract_pubkey = self.getContractPubkey(bid_date, bid.contract_count)
             # Bidder is the NAV receiver; allocate address_a from bidder's wallet so
             # bidder can later derive spending_key for the ITX redeem.
             if bid.nav_redeem_addr is None:
                 bid.nav_redeem_addr = self.getReceiveAddressForCoin(Coins.NAV)
             msg_buf.nav_redeem_addr = bid.nav_redeem_addr
+
+        if Coins(offer.coin_to) == Coins.NAV:
+            msg_buf.buyer_contract_pubkey = self.getContractPubkey(bid_date, bid.contract_count)
 
         return msg_buf
 
@@ -5464,8 +5467,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             if bid.participate_tx.txid is not None:
                 prevout["outid"] = bid.participate_tx.txid.hex()
             # else: prevout["outid"] already set from getPrevOutInfoFromOffChainTxn
-            remote_pubkey = bid.buyer_contract_pubkey if bid.was_received else bid.seller_contract_pubkey
-            blinding_key_int = ci.deriveBlindingKey(privkey, remote_pubkey)
+
+            ecdh_pubkey = bid.buyer_contract_pubkey if bid.was_received else bid.seller_contract_pubkey
+            blinding_key_int = ci.deriveBlindingKey(privkey, ecdh_pubkey)
             prevout["spending_key"] = ci.deriveSpendingKey(
                 f"{blinding_key_int:064x}", bid.nav_redeem_addr
             )
@@ -8951,10 +8955,15 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             bid.was_received = True
         if len(bid_data.proof_address) > 0:
             bid.proof_address = bid_data.proof_address
-        if Coins(offer.coin_from) == Coins.NAV:
+
+        if coin_to == Coins.NAV:
             bid.buyer_contract_pubkey = bid_data.buyer_contract_pubkey
-            if bid_data.nav_redeem_addr:
-                bid.nav_redeem_addr = bid_data.nav_redeem_addr
+
+        # if offerer is receiving NAV, offerer needs to create the NAV address
+        # from its wallet so that it will be able to compute spendingKey to 
+        # receive NAV
+        if coin_to == Coins.NAV and bid_data.nav_redeem_addr:
+            bid.nav_redeem_addr = bid_data.nav_redeem_addr
 
         bid.setState(BidStates.BID_RECEIVED)
         try:
@@ -9111,6 +9120,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         else:
             bid.pkhash_seller = script_pkhash2
 
+        # if offerer is receiving NAV, save bidder's contract pubkey to bid object
+        # to later compute blindingKey to compute spendingKey to receive NAV
         if Coins(offer.coin_to) == Coins.NAV:
             bid.seller_contract_pubkey = bid_accept_data.seller_contract_pubkey
             if bid_accept_data.nav_redeem_addr:

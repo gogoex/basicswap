@@ -1176,6 +1176,8 @@ def prepareDataDir(coin, settings, chain, particl_mnemonic, extra_opts={}):
     assert len(wallet_name) > 0
     data_dir = core_settings["datadir"]
     tor_control_password = extra_opts.get("tor_control_password", None)
+    # TODO NAV revert this after testnet is back
+    coin_chain = core_settings.get("chain_override", chain)
 
     if not os.path.exists(data_dir):
         os.makedirs(data_dir)
@@ -1325,15 +1327,16 @@ def prepareDataDir(coin, settings, chain, particl_mnemonic, extra_opts={}):
     if os.path.exists(core_conf_path):
         exitWithError(f"{core_conf_path} exists")
     with open(core_conf_path, "w") as fp:
-        if chain != "mainnet":
-            fp.write(chain + "=1\n")
+        # TODO NAV revert: use coin_chain instead of chain to respect chain_override
+        if coin_chain != "mainnet":
+            fp.write(coin_chain + "=1\n")
             if coin not in ("firo"):
-                if chain == "testnet":
+                if coin_chain == "testnet":
                     fp.write("[test]\n\n")
-                elif chain == "regtest":
+                elif coin_chain == "regtest":
                     fp.write("[regtest]\n\n")
                 else:
-                    logger.warning(f"Unknown chain {chain}")
+                    logger.warning(f"Unknown chain {coin_chain}")
 
         if COINS_RPCBIND_IP != "127.0.0.1":
             fp.write("rpcallowip=127.0.0.1\n")
@@ -1357,7 +1360,8 @@ def prepareDataDir(coin, settings, chain, particl_mnemonic, extra_opts={}):
         if coin == "particl":
             fp.write("deprecatedrpc=create_bdb\n")
             fp.write("debugexclude=libevent\n")
-            if chain == "mainnet":
+            # TODO NAV revert: use coin_chain
+            if coin_chain == "mainnet":
                 fp.write("rpcdoccheck=0\n")
             fp.write(
                 "zmqpubsmsg=tcp://{}:{}\n".format(COINS_RPCBIND_IP, settings["zmqport"])
@@ -2591,6 +2595,7 @@ def main():
             "conf_target": 2,
             "core_version_no": getKnownVersion("particl"),
             "core_version_group": 23,
+            "chain_override": "mainnet",  # TODO NAV revert this after testnet is back
         },
         "bitcoin": {
             "connection_type": "rpc",
@@ -2616,7 +2621,7 @@ def main():
             "datadir": os.getenv("LTC_DATA_DIR", os.path.join(data_dir, "litecoin")),
             "bindir": os.path.join(bin_dir, "litecoin"),
             "use_segwit": True,
-            "blocks_confirmed": 2,
+            "blocks_confirmed": 1,
             "conf_target": 2,
             "core_version_no": getKnownVersion("litecoin"),
             "core_version_group": 20,

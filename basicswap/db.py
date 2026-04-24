@@ -13,7 +13,7 @@ from enum import IntEnum, auto
 from typing import Optional
 
 
-CURRENT_DB_VERSION = 33  # TODO NAV: bumped from 32 to 33 for nav_redeem_addr; bump again when rebasing to master
+CURRENT_DB_VERSION = 34  # TODO NAV: bumped from 32 to 34 for nav_redeem_addr rename; bump again when rebasing to master
 CURRENT_DB_DATA_VERSION = 7
 
 
