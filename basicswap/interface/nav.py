@@ -409,7 +409,10 @@ class NAVInterface(BTCInterface):
         return self.rpc("getblsctseed")
 
     def importBlsctScript(self, params: dict, rescan: bool = False) -> dict:
-        return self.rpc_wallet("importblsctscript", [params, rescan])
+        args = [params, rescan]
+        if rescan:
+            args.append(self.getBlockchainInfo())
+        return self.rpc_wallet("importblsctscript", args)
 
     def initialiseWallet(self, key_bytes, restore_time: int = -1):
         del restore_time
