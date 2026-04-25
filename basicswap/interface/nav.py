@@ -410,8 +410,9 @@ class NAVInterface(BTCInterface):
 
     def importBlsctScript(self, params: dict, rescan: bool = False) -> dict:
         args = [params, rescan]
-        if rescan:
-            args.append(self.getBlockchainInfo())
+        # TODO NAV uncomment this after block height paramater is added
+        # if rescan:
+        #     args.append(self.getBlockchainInfo())
         return self.rpc_wallet("importblsctscript", args)
 
     def initialiseWallet(self, key_bytes, restore_time: int = -1):

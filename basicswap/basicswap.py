@@ -3976,7 +3976,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                         "locktime": lock_value,
                         "blinding_key": f"{blinding_key:064x}",
                     }
-                    ci_from.importBlsctScript(params, rescan=False)
+                    ci_from.importBlsctScript(params, rescan=True)
                     self.log.info(f"---> told naviod about initiate txn HTLC script for wallet tracking")
 
                 self.log.info(
@@ -6100,7 +6100,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             "blinding_key": f"{blinding_key:064x}",
         }
         ci_nav = self.ci(Coins.NAV)
-        ci_nav.importBlsctScript(params, rescan=False)
+        ci_nav.importBlsctScript(params, rescan=True)
         self.log.info(f"Imported NAV PTX HTLC script for bid {self.log.id(bid_id)}")
         ensure(tx_data_funded_bytes is not None, "NAV_PTX_IMPORT missing tx_data_funded")
         ci_nav.stashPtxDataFunded(bid_id, tx_data_funded_bytes)
