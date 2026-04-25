@@ -499,6 +499,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         self._bid_expired_leeway = 5
 
         self.swaps_in_progress = dict()
+        self._pending_nav_itx_imports: dict = {}  # bid_id -> parsed NAV_ITX_IMPORT data (timing stash)
 
         self.threads = []
         self.thread_pool = concurrent.futures.ThreadPoolExecutor(
@@ -6195,7 +6196,17 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         self.log.info(f"processNavItxImport: bid {self.log.id(bid_id)}, {nav_addr_redeem=}, {lock_value=}")
         if bid_id not in self.swaps_in_progress:
-            self.log.warning(f"processNavItxImport: bid {self.log.id(bid_id)} not in progress")
+            # BID_ACCEPT may arrive slightly after NAV_ITX_IMPORT (SMSG ordering not guaranteed).
+            # Stash the data; processBidAccept will drain it once the bid is in-progress.
+            self.log.warning(f"processNavItxImport: bid {self.log.id(bid_id)} not yet in progress — stashing for later")
+            self._pending_nav_itx_imports[bid_id] = {
+                "nav_addr_redeem": nav_addr_redeem,
+                "nav_addr_refund": nav_addr_refund,
+                "blinding_key": blinding_key,
+                "lock_value": lock_value,
+                "rescan_from": rescan_from,
+                "tx_data_funded_bytes": tx_data_funded_bytes,
+            }
             return
         bid = self.swaps_in_progress[bid_id][0]
         if bid.was_received:
@@ -7031,6 +7042,16 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             else:
                 if coin_from == Coins.NAV:
                     addr = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script).hex()
+                    locktime = ci_from.extractHTLCLocktime(bid.initiate_tx.script, is_nav=False)
+                    found = ci_from.getNavLockTxHeight(
+                        bid.initiate_tx.txid,
+                        addr,
+                        bid.amount,
+                        bid.chain_a_height_start,
+                        find_index=True,
+                        vout=bid.initiate_tx.vout,
+                        locktime=locktime,
+                    )
                 else:
                     if ci_from.using_segwit():
                         dest_script = ci_from.getScriptDest(bid.initiate_tx.script)
@@ -7038,14 +7059,14 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     else:
                         addr = ci_from.encode_p2sh(bid.initiate_tx.script)
 
-                found = ci_from.getLockTxHeight(
-                    bid.initiate_tx.txid,
-                    addr,
-                    bid.amount,
-                    bid.chain_a_height_start,
-                    find_index=True,
-                    vout=bid.initiate_tx.vout,
-                )
+                    found = ci_from.getLockTxHeight(
+                        bid.initiate_tx.txid,
+                        addr,
+                        bid.amount,
+                        bid.chain_a_height_start,
+                        find_index=True,
+                        vout=bid.initiate_tx.vout,
+                    )
                 index = None
                 if found:
                     bid.initiate_tx.conf = found["depth"]
@@ -9255,6 +9276,29 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         self.saveBid(bid_id, bid)
         self.swaps_in_progress[bid_id] = (bid, offer)
+
+        # Drain any NAV_ITX_IMPORT that arrived before this BID_ACCEPT
+        if Coins(offer.coin_from) == Coins.NAV and bid_id in self._pending_nav_itx_imports:
+            self.log.info(f"processBidAccept: draining stashed NAV_ITX_IMPORT for bid {self.log.id(bid_id)}")
+            stash = self._pending_nav_itx_imports.pop(bid_id)
+            secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
+            params = {
+                "type": "atomic_swap",
+                "address_a": stash["nav_addr_redeem"],
+                "address_b": stash["nav_addr_refund"],
+                "hash": secret_hash.hex(),
+                "locktime": stash["lock_value"],
+                "blinding_key": f"{stash['blinding_key']:064x}",
+            }
+            ci_nav = self.ci(Coins.NAV)
+            ci_nav.importBlsctScript(params, stash["rescan_from"])
+            self.log.info(f"processBidAccept: imported NAV ITX HTLC script for bid {self.log.id(bid_id)}")
+            tx_data_funded_bytes = stash["tx_data_funded_bytes"]
+            if tx_data_funded_bytes is not None:
+                bid.initiate_tx.tx_data_funded = tx_data_funded_bytes
+                self.saveBid(bid_id, bid)
+                self.log.info(f"processBidAccept: persisted NAV ITX tx_data_funded for bid {self.log.id(bid_id)}")
+
         self.notify(NT.BID_ACCEPTED, {"bid_id": bid_id.hex()})
 
     def receiveXmrBid(self, bid, cursor) -> None:
