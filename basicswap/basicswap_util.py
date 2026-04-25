@@ -69,6 +69,7 @@ class MessageTypes(IntEnum):
 
     NAV_SECRET_REVEAL = auto()
     NAV_PTX_IMPORT = auto()
+    NAV_ITX_IMPORT = auto()
 
 
 class AddressTypes(IntEnum):

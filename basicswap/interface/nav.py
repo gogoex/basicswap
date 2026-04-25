@@ -409,7 +409,7 @@ class NAVInterface(BTCInterface):
         return self.rpc("getblsctseed")
 
     def importBlsctScript(self, params: dict, rescan_from: None | int) -> dict:
-        rescan = rescan_from is not None
+        rescan = False # rescan_from is not None
         args = [params, rescan]
         # TODO NAV uncomment this after block height paramater is added
         # if rescan:

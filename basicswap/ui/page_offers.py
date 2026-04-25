@@ -483,10 +483,10 @@ def page_newoffer(self, url_split, post_string):
         "amt_bid_min": format_amount(1, 3),
         "swap_type": strSwapType(SwapTypes.SELLER_FIRST),
         # TODO: remove dev defaults
-        "coin_from": Coins.LTC,
-        "coin_to": Coins.NAV,
-        "amt_from": "0.002",
-        "amt_to": "0.01",
+        "coin_from": Coins.NAV,
+        "coin_to": Coins.LTC,
+        "amt_from": "0.01",
+        "amt_to": "0.002",
     }
 
     post_data = parse.parse_qs(post_string)
