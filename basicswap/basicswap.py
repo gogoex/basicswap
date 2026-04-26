@@ -7049,8 +7049,15 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     pass
             else:
                 if coin_from == Coins.NAV:
-                    # Pass secret_hash as addr — NAVInterface.getLockTxHeight uses listblsctunspent
-                    addr = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script).hex()
+                    secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
+                    locktime = ci_from.extractHTLCLocktime(bid.initiate_tx.script, is_nav=False)
+                    found = ci_from.getNavLockTxHeight(
+                        bid.initiate_tx.txid,
+                        secret_hash.hex(),
+                        bid.amount,
+                        bid.chain_a_height_start,
+                        locktime=locktime,
+                    )
                 else:
                     if ci_from.using_segwit():
                         dest_script = ci_from.getScriptDest(bid.initiate_tx.script)
@@ -7058,14 +7065,14 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     else:
                         addr = ci_from.encode_p2sh(bid.initiate_tx.script)
 
-                found = ci_from.getLockTxHeight(
-                    bid.initiate_tx.txid,
-                    addr,
-                    bid.amount,
-                    bid.chain_a_height_start,
-                    find_index=True,
-                    vout=bid.initiate_tx.vout,
-                )
+                    found = ci_from.getLockTxHeight(
+                        bid.initiate_tx.txid,
+                        addr,
+                        bid.amount,
+                        bid.chain_a_height_start,
+                        find_index=True,
+                        vout=bid.initiate_tx.vout,
+                    )
                 index = None
                 if found:
                     bid.initiate_tx.conf = found["depth"]

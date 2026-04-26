@@ -290,38 +290,37 @@ class NAVInterface(BTCInterface):
         # difference between redeem and refund transactions are small
         return 1336
 
-    def getLockTxHeight(
+    def getNavLockTxHeight(
         self,
         txid,
         dest_address,
         bid_amount,
         rescan_from,
-        find_index: bool = False,
-        vout: int = -1,
+        locktime: int = 0,
     ):
-        """Override BTCInterface.getLockTxHeight for BLSCT.
-        BLSCT outputs have no standard addresses and tx hashes change after
-        block aggregation. dest_address is expected to be the secret_hash hex.
-        Searches listblsctunspent for matching HTLC output."""
-        del bid_amount, rescan_from, txid, find_index, vout
-        self._log.info(f"---> getLockTxHeight (NAV): {dest_address=}")
+        """BLSCT-specific lock tx lookup.
+        dest_address is the secret_hash hex. locktime is the BLSCT absolute
+        timestamp extracted from the fake script stored in bid.initiate_tx.script,
+        used to discriminate between UTxOs sharing the same secret_hash (e.g. in
+        test environments where the Particl HD wallet reuses the same secret)."""
+        del bid_amount, rescan_from, txid
+        self._log.info(f"---> getNavLockTxHeight: {dest_address=} {locktime=}")
         if not dest_address:
             return None
 
         secret_hash = dest_address.lower()
         try:
             utxos = self.listBlsctUnspent(min_conf=0)
-            self._log.debug(f"getLockTxHeight: {len(utxos)} UTxOs from listblsctunspent, seeking secret_hash={secret_hash}")
+            self._log.debug(f"getNavLockTxHeight: {len(utxos)} UTxOs from listblsctunspent, seeking secret_hash={secret_hash}")
             for utxo in utxos:
                 utxo_spk = utxo.get("scriptPubKey", "").lower()
                 if not self.isHTLCScript(utxo_spk):
                     continue
-                spk_secret_hash = atomic_swap_1.extractScriptSecretHash(bytes.fromhex(utxo_spk)).hex()
-                self._log.debug(f"getLockTxHeight: HTLC UTxO spk_secret_hash={spk_secret_hash}")
-
-                # Match by secret_hash only — locktime in fake BTC script (CSV) differs from
-                # BLSCT on-chain absolute timestamp; secret_hash (32 random bytes) is unique per swap.
-                if spk_secret_hash == secret_hash:
+                spk_bytes = bytes.fromhex(utxo_spk)
+                spk_secret_hash = atomic_swap_1.extractScriptSecretHash(spk_bytes).hex()
+                spk_locktime = self.extractHTLCLocktime(spk_bytes, is_nav=True)
+                self._log.debug(f"getNavLockTxHeight: HTLC UTxO spk_secret_hash={spk_secret_hash} spk_locktime={spk_locktime}")
+                if spk_secret_hash == secret_hash and spk_locktime == locktime:
                     confirmations = utxo.get("confirmations", 0)
                     chain_info = self.rpc("getblockchaininfo")
                     chain_height = chain_info["blocks"]
@@ -329,13 +328,12 @@ class NAVInterface(BTCInterface):
                     rv = {
                         "depth": confirmations,
                         "height": block_height,
-                        # Try "outid" first (rc18+), fall back to "outputHash" (rc15)
                         "outid": utxo.get("outid", None) or utxo.get("outputHash", ""),
                     }
-                    self._log.info(f"getLockTxHeight found HTLC via listblsctunspent: {rv}")
+                    self._log.info(f"getNavLockTxHeight found HTLC via listblsctunspent: {rv}")
                     return rv
         except Exception as e:
-            self._log.error(f"getLockTxHeight listblsctunspent search failed: {e}")
+            self._log.error(f"getNavLockTxHeight listblsctunspent search failed: {e}")
 
         return None
 
