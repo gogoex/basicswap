@@ -290,7 +290,7 @@ class NAVInterface(BTCInterface):
         # difference between redeem and refund transactions are small
         return 1336
 
-    def getNavLockTxHeight(
+    def getLockTxHeight(
         self,
         txid,
         dest_address,
@@ -298,28 +298,30 @@ class NAVInterface(BTCInterface):
         rescan_from,
         find_index: bool = False,
         vout: int = -1,
-        *,
-        locktime: int,
     ):
-        """BLSCT outputs don't have standard addresses, and tx hashes change
-        after block aggregation.  Search listblsctunspent for the HTLC output
-        matching dest_address (which contains the secret_hash for NAV). """
+        """Override BTCInterface.getLockTxHeight for BLSCT.
+        BLSCT outputs have no standard addresses and tx hashes change after
+        block aggregation. dest_address is expected to be the secret_hash hex.
+        Searches listblsctunspent for matching HTLC output."""
         del bid_amount, rescan_from, txid, find_index, vout
-        self._log.info(f"---> getLockTxHeight: {dest_address=}")
+        self._log.info(f"---> getLockTxHeight (NAV): {dest_address=}")
         if not dest_address:
             return None
 
         secret_hash = dest_address.lower()
         try:
             utxos = self.listBlsctUnspent(min_conf=0)
+            self._log.debug(f"getLockTxHeight: {len(utxos)} UTxOs from listblsctunspent, seeking secret_hash={secret_hash}")
             for utxo in utxos:
                 utxo_spk = utxo.get("scriptPubKey", "").lower()
                 if not self.isHTLCScript(utxo_spk):
                     continue
                 spk_secret_hash = atomic_swap_1.extractScriptSecretHash(bytes.fromhex(utxo_spk)).hex()
-                spk_locktime = self.extractHTLCLocktime(bytes.fromhex(utxo_spk), is_nav=True)
+                self._log.debug(f"getLockTxHeight: HTLC UTxO spk_secret_hash={spk_secret_hash}")
 
-                if spk_secret_hash == secret_hash and spk_locktime == locktime:
+                # Match by secret_hash only — locktime in fake BTC script (CSV) differs from
+                # BLSCT on-chain absolute timestamp; secret_hash (32 random bytes) is unique per swap.
+                if spk_secret_hash == secret_hash:
                     confirmations = utxo.get("confirmations", 0)
                     chain_info = self.rpc("getblockchaininfo")
                     chain_height = chain_info["blocks"]
@@ -409,11 +411,10 @@ class NAVInterface(BTCInterface):
         return self.rpc("getblsctseed")
 
     def importBlsctScript(self, params: dict, rescan_from: None | int) -> dict:
-        rescan = False # rescan_from is not None
+        rescan = rescan_from is not None
         args = [params, rescan]
-        # TODO NAV uncomment this after block height paramater is added
-        # if rescan:
-        #     args.append(rescan_from)
+        if rescan:
+            args.append(rescan_from)
         return self.rpc_wallet("importblsctscript", args)
 
     def initialiseWallet(self, key_bytes, restore_time: int = -1):

@@ -6228,6 +6228,11 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         ci_nav = self.ci(Coins.NAV)
         ci_nav.importBlsctScript(params, rescan_from)
         self.log.info(f"Imported NAV ITX HTLC script for bid {self.log.id(bid_id)}")
+        # ITx is already on-chain when bidder imports; rescanblockchain finds the existing UTXO
+        if rescan_from is not None:
+            self.log.info(f"processNavItxImport: rescanning from height {rescan_from} to find ITX UTXO")
+            ci_nav.rpc_wallet("rescanblockchain", [rescan_from])
+            self.log.info(f"processNavItxImport: rescan complete")
         ensure(tx_data_funded_bytes is not None, "NAV_ITX_IMPORT missing tx_data_funded")
         ensure(bid.initiate_tx.tx_data_funded is None, "NAV ITX tx_data_funded already set")
         bid.initiate_tx.tx_data_funded = tx_data_funded_bytes
@@ -7041,17 +7046,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     pass
             else:
                 if coin_from == Coins.NAV:
+                    # Pass secret_hash as addr — NAVInterface.getLockTxHeight uses listblsctunspent
                     addr = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script).hex()
-                    locktime = ci_from.extractHTLCLocktime(bid.initiate_tx.script, is_nav=False)
-                    found = ci_from.getNavLockTxHeight(
-                        bid.initiate_tx.txid,
-                        addr,
-                        bid.amount,
-                        bid.chain_a_height_start,
-                        find_index=True,
-                        vout=bid.initiate_tx.vout,
-                        locktime=locktime,
-                    )
                 else:
                     if ci_from.using_segwit():
                         dest_script = ci_from.getScriptDest(bid.initiate_tx.script)
@@ -7059,14 +7055,14 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     else:
                         addr = ci_from.encode_p2sh(bid.initiate_tx.script)
 
-                    found = ci_from.getLockTxHeight(
-                        bid.initiate_tx.txid,
-                        addr,
-                        bid.amount,
-                        bid.chain_a_height_start,
-                        find_index=True,
-                        vout=bid.initiate_tx.vout,
-                    )
+                found = ci_from.getLockTxHeight(
+                    bid.initiate_tx.txid,
+                    addr,
+                    bid.amount,
+                    bid.chain_a_height_start,
+                    find_index=True,
+                    vout=bid.initiate_tx.vout,
+                )
                 index = None
                 if found:
                     bid.initiate_tx.conf = found["depth"]
@@ -9291,8 +9287,13 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 "blinding_key": f"{stash['blinding_key']:064x}",
             }
             ci_nav = self.ci(Coins.NAV)
-            ci_nav.importBlsctScript(params, stash["rescan_from"])
+            rescan_from = stash["rescan_from"]
+            ci_nav.importBlsctScript(params, rescan_from)
             self.log.info(f"processBidAccept: imported NAV ITX HTLC script for bid {self.log.id(bid_id)}")
+            if rescan_from is not None:
+                self.log.info(f"processBidAccept: rescanning from height {rescan_from} to find ITX UTXO")
+                ci_nav.rpc_wallet("rescanblockchain", [rescan_from])
+                self.log.info(f"processBidAccept: rescan complete")
             tx_data_funded_bytes = stash["tx_data_funded_bytes"]
             if tx_data_funded_bytes is not None:
                 bid.initiate_tx.tx_data_funded = tx_data_funded_bytes
