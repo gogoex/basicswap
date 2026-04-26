@@ -6228,6 +6228,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         ci_nav = self.ci(Coins.NAV)
         ci_nav.importBlsctScript(params, rescan_from)
         self.log.info(f"Imported NAV ITX HTLC script for bid {self.log.id(bid_id)}")
+        # Update initiate_tx.script to fake BLSCT format (with absolute locktime) so
+        # isHTLCTxnSpent can match the on-chain UTxO locktime correctly.
+        bid.initiate_tx.script = ci_nav.createFakeNonNavHTLCScript(secret_hash, lock_value)
         # ITx is already on-chain when bidder imports; rescanblockchain finds the existing UTXO
         if rescan_from is not None:
             self.log.info(f"processNavItxImport: rescanning from height {rescan_from} to find ITX UTXO")
@@ -9290,6 +9293,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             rescan_from = stash["rescan_from"]
             ci_nav.importBlsctScript(params, rescan_from)
             self.log.info(f"processBidAccept: imported NAV ITX HTLC script for bid {self.log.id(bid_id)}")
+            bid.initiate_tx.script = ci_nav.createFakeNonNavHTLCScript(secret_hash, stash["lock_value"])
             if rescan_from is not None:
                 self.log.info(f"processBidAccept: rescanning from height {rescan_from} to find ITX UTXO")
                 ci_nav.rpc_wallet("rescanblockchain", [rescan_from])

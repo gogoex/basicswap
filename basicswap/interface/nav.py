@@ -540,7 +540,7 @@ class NAVInterface(BTCInterface):
                 spk_secret_hash = atomic_swap_1.extractScriptSecretHash(spk_bytes)
                 spk_locktime = self.extractHTLCLocktime(spk_bytes, is_nav=True)
                 if secret_hash == spk_secret_hash and locktime == spk_locktime:
-                    self._log.debug(f"isHTLCTxnSpent: fonund matching utxo. not spent yet: {utxo=}")
+                    self._log.debug(f"isHTLCTxnSpent: found matching utxo, not spent yet: {utxo=}")
                     return False
             self._log.debug(f"isHTLCTxnSpent: {secret_hash.hex()} is spent")
             return True
