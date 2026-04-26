@@ -7079,6 +7079,13 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     if "index" in found:
                         index = found["index"]
                     tx_height = found["height"]
+                    if coin_from == Coins.NAV:
+                        outid = found.get("outid", "")
+                        if outid and bid.initiate_tx.txid != bytes.fromhex(outid):
+                            self.log.info(f"Updating NAV ITx txid to stable outid {self.log.id(outid)} for bid {self.log.id(bid_id)}")
+                            bid.initiate_tx.txid = bytes.fromhex(outid)
+                            initiate_txnid_hex = outid
+                            save_bid = True
 
             if bid.initiate_tx.conf != last_initiate_txn_conf:
                 save_bid = True
