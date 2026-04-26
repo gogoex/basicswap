@@ -539,24 +539,21 @@ class NAVInterface(BTCInterface):
                 spk_locktime = self.extractHTLCLocktime(spk_bytes, is_nav=True)
                 if secret_hash == spk_secret_hash and locktime == spk_locktime:
                     # UTxO appears in wallet — verify it's still in the confirmed UTXO set.
-                    # listblsctunspent on watchonly wallets may not remove a UTxO when it
-                    # is spent by an external wallet.  getblsctoutput queries the node's
-                    # confirmed UTXO set directly (wallet-independent) and returns error
-                    # code -5 / "Output not found" once the output is confirmed-spent.
+                    # listblsctunspent on watchonly wallets does not remove a UTxO when it
+                    # is spent by an external wallet.  gettxout queries the consensus UTXO
+                    # set directly (wallet-independent, mempool-independent) and returns an
+                    # empty result once the output is confirmed-spent.
                     outid = utxo.get("outid")
                     if outid:
-                        try:
-                            self.rpc("getblsctoutput", [outid])
-                            # Still in UTXO set → genuinely unspent
+                        result = self.rpc("gettxout", [outid])
+                        if result:
+                            # Still in consensus UTXO set → genuinely unspent
                             self._log.debug(f"isHTLCTxnSpent: outid={outid[:16]}... in UTXO set (unspent)")
                             return False
-                        except Exception as e:
-                            if "Output not found" in str(e):
-                                # Confirmed spent (aggregated txid differs from submitted txid)
-                                self._log.debug(f"isHTLCTxnSpent: outid={outid[:16]}... not in UTXO set (spent)")
-                                return True
-                            self._log.error(f"isHTLCTxnSpent: getblsctoutput error for outid={outid[:16]}...: {e}")
-                            return False
+                        else:
+                            # Empty result → confirmed spent
+                            self._log.debug(f"isHTLCTxnSpent: outid={outid[:16]}... not in UTXO set (spent)")
+                            return True
                     # No outid available — fall back to listblsctunspent result
                     self._log.debug(f"isHTLCTxnSpent: found matching utxo, not spent yet: {utxo=}")
                     return False
