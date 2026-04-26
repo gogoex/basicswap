@@ -529,7 +529,7 @@ class NAVInterface(BTCInterface):
         locktime = self.extractHTLCLocktime(script, is_nav=False)
         self._log.debug(f"isHTLCTxnSpent: secret_hash={secret_hash.hex()} {locktime=} script={script.hex()}")
         try:
-            utxos = self.listBlsctUnspent(min_conf=0)
+            utxos = self.listBlsctUnspent(min_conf=1)
             for utxo in utxos:
                 spk = utxo.get("scriptPubKey", "")
                 if not self.isHTLCScript(spk):
