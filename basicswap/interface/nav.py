@@ -310,7 +310,7 @@ class NAVInterface(BTCInterface):
 
         secret_hash = dest_address.lower()
         try:
-            utxos = self.listBlsctUnspent(min_conf=0)
+            utxos = self.listBlsctUnspent()
             self._log.debug(f"getNavLockTxHeight: {len(utxos)} UTxOs from listblsctunspent, seeking secret_hash={secret_hash}")
             for utxo in utxos:
                 utxo_spk = utxo.get("scriptPubKey", "").lower()
@@ -529,7 +529,7 @@ class NAVInterface(BTCInterface):
         locktime = self.extractHTLCLocktime(script, is_nav=False)
         self._log.debug(f"isHTLCTxnSpent: secret_hash={secret_hash.hex()} {locktime=} script={script.hex()}")
         try:
-            utxos = self.listBlsctUnspent(min_conf=1)
+            utxos = self.listBlsctUnspent()
             for utxo in utxos:
                 spk = utxo.get("scriptPubKey", "")
                 if not self.isHTLCScript(spk):
@@ -538,6 +538,26 @@ class NAVInterface(BTCInterface):
                 spk_secret_hash = atomic_swap_1.extractScriptSecretHash(spk_bytes)
                 spk_locktime = self.extractHTLCLocktime(spk_bytes, is_nav=True)
                 if secret_hash == spk_secret_hash and locktime == spk_locktime:
+                    # UTxO appears in wallet — verify it's still in the confirmed UTXO set.
+                    # listblsctunspent on watchonly wallets may not remove a UTxO when it
+                    # is spent by an external wallet.  getblsctoutput queries the node's
+                    # confirmed UTXO set directly (wallet-independent) and returns error
+                    # code -5 / "Output not found" once the output is confirmed-spent.
+                    outid = utxo.get("outid")
+                    if outid:
+                        try:
+                            self.rpc("getblsctoutput", [outid])
+                            # Still in UTXO set → genuinely unspent
+                            self._log.debug(f"isHTLCTxnSpent: outid={outid[:16]}... in UTXO set (unspent)")
+                            return False
+                        except Exception as e:
+                            if "Output not found" in str(e):
+                                # Confirmed spent (aggregated txid differs from submitted txid)
+                                self._log.debug(f"isHTLCTxnSpent: outid={outid[:16]}... not in UTXO set (spent)")
+                                return True
+                            self._log.error(f"isHTLCTxnSpent: getblsctoutput error for outid={outid[:16]}...: {e}")
+                            return False
+                    # No outid available — fall back to listblsctunspent result
                     self._log.debug(f"isHTLCTxnSpent: found matching utxo, not spent yet: {utxo=}")
                     return False
             self._log.debug(f"isHTLCTxnSpent: {secret_hash.hex()} is spent")
@@ -550,8 +570,8 @@ class NAVInterface(BTCInterface):
     def isTxNonFinalError(self, err_str: str) -> bool:
         return "bad-inputs-unknown" in err_str or "'code': 25" in err_str
     
-    def listBlsctUnspent(self, min_conf: int = 1) -> list:
-        return self.rpc_wallet("listblsctunspent", [min_conf])
+    def listBlsctUnspent(self) -> list:
+        return self.rpc_wallet("listblsctunspent", [0])
 
     def publishTx(self, tx: bytes):
         self._log.debug(f"---> publishing tx tx={tx.hex()}")
