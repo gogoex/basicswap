@@ -1679,7 +1679,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             self.setStringKV(key_str, root_address)
             return
 
-        root_key = self.getWalletKey(interface_type, 1)
+        root_key = self.getWalletKey(
+            interface_type, 1, for_bls=(interface_type == Coins.NAV)
+        )
         # TODO NAVIO delete this
         # if interface_type == Coins.LTC:
         #     root_key = bytes.fromhex("e2a6e2cdbac6007288600d9c884cc66389bad8abb3cd73c3092b904a67946e8f")
@@ -2778,14 +2780,34 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             if nonce > 1000:
                 raise ValueError("grindForEd25519Key failed")
 
-    def getWalletKey(self, coin_type, key_num, for_ed25519=False) -> bytes:
+    def grindForBLSKey(self, coin_type, evkey, key_path_base) -> bytes:
+        BLS_GROUP_ORDER = 0x73EDA753299D7D483339D80809A1D80553BDA402FFFE5BFEFFFFFFFF00000001
+        nonce = 1
+        while True:
+            key_path = key_path_base + "/{}".format(nonce)
+            extkey = self.callcoinrpc(Coins.PART, "extkey", ["info", evkey, key_path])[
+                "key_info"
+            ]["result"]
+            privkey = decodeWif(
+                self.callcoinrpc(Coins.PART, "extkey", ["info", extkey])["key_info"][
+                    "privkey"
+                ]
+            )
+            i = b2i(privkey)
+            if 0 < i < BLS_GROUP_ORDER:
+                return privkey
+            nonce += 1
+            if nonce > 1000:
+                raise ValueError("grindForBLSKey failed")
+
+    def getWalletKey(self, coin_type, key_num, for_ed25519=False, for_bls=False) -> bytes:
         evkey = self.callcoinrpc(Coins.PART, "extkey", ["account", "default", "true"])[
             "evkey"
         ]
 
         key_path_base = "44445555h/1h/{}/{}".format(int(coin_type), key_num)
 
-        if not for_ed25519:
+        if not for_ed25519 and not for_bls:
             extkey = self.callcoinrpc(
                 Coins.PART, "extkey", ["info", evkey, key_path_base]
             )["key_info"]["result"]
@@ -2794,6 +2816,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     "privkey"
                 ]
             )
+
+        if for_bls:
+            return self.grindForBLSKey(coin_type, evkey, key_path_base)
 
         return self.grindForEd25519Key(coin_type, evkey, key_path_base)
 
