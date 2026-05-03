@@ -5564,8 +5564,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         tx_vsize = ci.getHTLCSpendTxVSize()
         tx_fee = (fee_rate * tx_vsize) / 1000
-        if coin_type == Coins.NAV and tx_fee < 0.001:  # NAV's minimum fee is 0.001
-            tx_fee = 0.001
 
         self.log.debug(f"---> {tx_vsize=}, {tx_fee=}")
 
@@ -5773,8 +5771,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         # calculate estimated fee
         tx_vsize = ci.getHTLCSpendTxVSize(False)
         tx_fee = (fee_rate * tx_vsize) / 1000
-        if coin_type == Coins.NAV and tx_fee < 0.001:  # NAV's minimum fee is 0.001
-            tx_fee = 0.001
 
         self.log.info(f"---> tx_vsize: {tx_vsize}")
         self.log.info(f"---> tx_fee: {tx_fee}")

@@ -278,11 +278,11 @@ class NAVInterface(BTCInterface):
             )
             return override_feerate, "override_feerate"
 
-        # fixed fee in sat/kb
-        navoshi_per_kb = 125
-        fee_nav = navoshi_per_kb * 1e-8
+        navoshi_per_byte = 125
+        navoshi_per_kb = navoshi_per_byte * 1000
+        nav_per_kb = navoshi_per_kb * 1e-8
 
-        return fee_nav, "default_feerate" 
+        return nav_per_kb, "default_feerate"
 
     def getHTLCSpendTxVSize(self, redeem: bool = True) -> int:
         del redeem
