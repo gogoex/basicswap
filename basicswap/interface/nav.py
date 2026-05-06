@@ -38,7 +38,13 @@ class NAVInterface(BTCInterface):
         return self._ptx_data_funded.pop(bid_id, None)
 
     def checkExpectedSeed(self, expect_seedid: str) -> bool:
-        actual_seedid = self.getWalletSeedID()
+        RPC_WALLET_BLANK = -37
+        try:
+            actual_seedid = self.getWalletSeedID()
+        except Exception as e:
+            if str(RPC_WALLET_BLANK) in str(e):
+                return False
+            raise
         return expect_seedid == actual_seedid
 
     def _createRawFundedTransaction(

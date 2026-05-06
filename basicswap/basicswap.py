@@ -3109,7 +3109,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 self.log.warning(
                     f"Setting seed ID for coin {ci.coin_name()} from master key."
                 )
-                root_key = self.getWalletKey(c, 1)
+                root_key = self.getWalletKey(c, 1, for_bls=(c == Coins.NAV))
                 self.log.info(f"root_key for {c}: {root_key.hex()}")
                 self.storeSeedIDForCoin(root_key, c)
                 expect_seedid: str | None = self.getStringKV(seed_key)
@@ -3123,6 +3123,11 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         if ci.checkExpectedSeed(expect_seedid):
             ci.setWalletSeedWarning(False)
             return True
+        if c == Coins.NAV:
+            self.initialiseWallet(c)
+            if ci.checkExpectedSeed(expect_seedid):
+                ci.setWalletSeedWarning(False)
+                return True
         if c == Coins.DCR:
             # Try the legacy extkey
             expect_seedid = self.getStringKV(
