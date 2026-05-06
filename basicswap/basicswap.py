@@ -463,7 +463,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             Coins.PART_BLIND,
             Coins.BCH,
         )
-        self.blsct_coins = (Coins.NAV,)
         self.coins_without_segwit = (Coins.PIVX, Coins.DASH)
 
         # TODO: Adjust ranges
@@ -2381,7 +2380,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         )
         self.log.debug(f"Ensuring wallet can send {balance_msg}.")
         try:
-            if ci.interface_type() in self.scriptless_coins + self.blsct_coins:
+            if ci.interface_type() in self.scriptless_coins:
                 ci.ensureFunds(ensure_balance + estimated_fee)
             else:
                 pi = self.pi(swap_type)
