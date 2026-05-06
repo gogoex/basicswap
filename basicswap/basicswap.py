@@ -2796,7 +2796,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             )
             i = b2i(privkey) % BLS_GROUP_ORDER
             if i != 0:
-                return i2b(i, 32)
+                return i.to_bytes(32, "big")
             nonce += 1
             if nonce > 0x7FFFFFFF:
                 raise ValueError("deriveBLSKey failed")
