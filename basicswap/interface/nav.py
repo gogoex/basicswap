@@ -400,9 +400,7 @@ class NAVInterface(BTCInterface):
         return ("blsct_balance_proof", proof_hex, [])
 
     def getSeedHash(self, seed: bytes) -> bytes:
-        del seed
-        seedid_hex = self.getWalletSeedID()
-        return bytes.fromhex(seedid_hex)
+        return seed
 
     def getSpendingPubKey(self) -> bytes:
         return bytes(96)
