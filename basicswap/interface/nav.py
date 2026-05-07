@@ -436,6 +436,12 @@ class NAVInterface(BTCInterface):
         return self.rpc("getblsctseed")
 
     def importBlsctScript(self, params: dict, rescan_from: None | int) -> dict:
+        if rescan_from is not None:
+            try:
+                chain_height = self.rpc("getblockchaininfo")["blocks"]
+                rescan_from = min(rescan_from, chain_height)
+            except Exception as e:
+                self._log.warning(f"importBlsctScript: could not get chain height: {e}")
         rescan = rescan_from is not None
         args = [params, rescan]
         if rescan:

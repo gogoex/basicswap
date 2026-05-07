@@ -6259,6 +6259,11 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         bid.initiate_tx.script = ci_nav.createFakeNonNavHTLCScript(secret_hash, lock_value)
         # ITx is already on-chain when bidder imports; rescanblockchain finds the existing UTXO
         if rescan_from is not None:
+            try:
+                chain_height = ci_nav.rpc("getblockchaininfo")["blocks"]
+                rescan_from = min(rescan_from, chain_height)
+            except Exception as e:
+                self.log.warning(f"processNavItxImport: could not clamp rescan_from: {e}")
             self.log.info(f"processNavItxImport: rescanning from height {rescan_from} to find ITX UTXO")
             ci_nav.rpc_wallet("rescanblockchain", [rescan_from])
             self.log.info(f"processNavItxImport: rescan complete")
@@ -9335,6 +9340,11 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             self.log.info(f"processBidAccept: imported NAV ITX HTLC script for bid {self.log.id(bid_id)}")
             bid.initiate_tx.script = ci_nav.createFakeNonNavHTLCScript(secret_hash, stash["lock_value"])
             if rescan_from is not None:
+                try:
+                    chain_height = ci_nav.rpc("getblockchaininfo")["blocks"]
+                    rescan_from = min(rescan_from, chain_height)
+                except Exception as e:
+                    self.log.warning(f"processBidAccept: could not clamp rescan_from: {e}")
                 self.log.info(f"processBidAccept: rescanning from height {rescan_from} to find ITX UTXO")
                 ci_nav.rpc_wallet("rescanblockchain", [rescan_from])
                 self.log.info(f"processBidAccept: rescan complete")
