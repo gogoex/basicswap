@@ -386,7 +386,7 @@ class NAVInterface(BTCInterface):
                     "outid": output["outputHash"],
                     "amount": output["amount"],
                     "gamma": output["gamma"],
-                    "spending_key": output["spending_key"],
+                    "spending_key": output.get("spending_key", ""),
                 }
         raise ValueError(f"No HTLC output found for secret_hash={secret_hash.hex()}")
 
