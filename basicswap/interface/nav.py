@@ -9,7 +9,7 @@ from basicswap.interface.btc import (
     BTCInterface,
 )
 from basicswap.chainparams import Coins
-from typing import Optional, Any, TypedDict
+from typing import Optional, Any, TypedDict, NotRequired
 from basicswap.basicswap_util import TxLockTypes
 from basicswap.util import SerialiseNum
 from basicswap.util.crypto import sha256
@@ -20,7 +20,7 @@ class PrevOutInfo(TypedDict):
     outid: str
     amount: int
     gamma: str
-    spending_key: str
+    spending_key: NotRequired[str]
 
 class NAVInterface(BTCInterface):
     @staticmethod
@@ -382,12 +382,14 @@ class NAVInterface(BTCInterface):
             self._log.debug(f"found HTLC script: spk_secret_hash={spk_secret_hash.hex()}")
             if secret_hash == spk_secret_hash:
                 self._log.info(f"---> got NAV prevout (off-chain)={output}")
-                return {
+                rv = {
                     "outid": output["outputHash"],
                     "amount": output["amount"],
                     "gamma": output["gamma"],
-                    "spending_key": output.get("spending_key", ""),
                 }
+                if "spending_key" in output:
+                    rv["spending_key"] = output["spending_key"]
+                return rv
         raise ValueError(f"No HTLC output found for secret_hash={secret_hash.hex()}")
 
     def getProofOfFunds(self, amount_for, extra_commit_bytes):
