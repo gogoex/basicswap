@@ -2783,7 +2783,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
     def deriveBLSKey(self, coin_type, evkey, key_path_base) -> bytes:
         BLS_GROUP_ORDER = 0x73EDA753299D7D483339D80809A1D80553BDA402FFFE5BFEFFFFFFFF00000001
         parent_path = key_path_base.rpartition("/")[0]
-        nonce = 1
+        # TODO NAV: revert nonce to 1 once b660 uses a separate Particl seed
+        nonce = 2
         while True:
             key_path = "{}/{}".format(parent_path, nonce)
             extkey = self.callcoinrpc(Coins.PART, "extkey", ["info", evkey, key_path])[
