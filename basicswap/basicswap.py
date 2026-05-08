@@ -1484,6 +1484,18 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                         ci.coin_name(), synced
                     )
                 )
+            if c == Coins.NAV:
+                try:
+                    balance = ci.getWalletInfo().get("balance", 0.0)
+                    if balance < 0.0001:
+                        raise ValueError(
+                            f"Navio wallet balance ({balance:.8f} NAV) too low to pay redeem fees. "
+                            f"Minimum 0.0001 NAV required."
+                        )
+                except ValueError:
+                    raise
+                except Exception as e:
+                    self.log.warning(f"checkCoinsReady: could not check NAV balance: {e}")
 
     def isSystemUnlocked(self) -> bool:
         # TODO - Check all active coins
