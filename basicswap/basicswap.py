@@ -7291,6 +7291,13 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 ):
                     self.participateTxnConfirmed(bid_id, bid, offer)
                     save_bid = True
+            if coin_from == Coins.NAV and bid.getITxState() in (TxStates.TX_SENT, TxStates.TX_CONFIRMED):
+                if bid.initiate_tx is not None:
+                    ci_from = self.ci(coin_from)
+                    if ci_from.isHTLCTxnSpent(bid.initiate_tx.script):
+                        self.log.info(f"NAV ITx spent (refunded) in SWAP_INITIATED for bid {self.log.id(bid_id)}, marking TX_REFUNDED")
+                        bid.setITxState(TxStates.TX_REFUNDED)
+                        save_bid = True
         elif state == BidStates.SWAP_PARTICIPATING:
             if coin_from == Coins.NAV and hasattr(bid, 'initiate_tx'):
                 ci_from = self.ci(coin_from)
