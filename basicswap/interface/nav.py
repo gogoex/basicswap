@@ -597,7 +597,7 @@ class NAVInterface(BTCInterface):
         return False
 
     def isTxNonFinalError(self, err_str: str) -> bool:
-        return "bad-inputs-unknown" in err_str or "'code': 25" in err_str
+        return "non-final-input" in err_str or "bad-input-unknown" in err_str or "'code': 25" in err_str
     
     def listBlsctUnspent(self) -> list:
         return self.rpc_wallet("listblsctunspent", [0])
