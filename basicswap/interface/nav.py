@@ -188,10 +188,12 @@ class NAVInterface(BTCInterface):
         sequence: int,
         txn_script: bytes | None = None,
     ) -> str:
-        del sequence, txn_script 
+        del txn_script
+        # For ABS lock types, locktime holds the CLTV value; for SEQUENCE types, sequence does.
+        nav_locktime = locktime if locktime != 0 else sequence
         navoshi_output_value = self.make_int(output_value, r=1)
         del output_value
-        self._log.info(f"---> createRefundTxn amount={prevout['amount']}, {navoshi_output_value=}")
+        self._log.info(f"---> createRefundTxn amount={prevout['amount']}, {navoshi_output_value=}, {nav_locktime=}")
 
         in_params: dict[str, Any] = {
             "outid": prevout["outid"],
@@ -199,11 +201,11 @@ class NAVInterface(BTCInterface):
             "gamma": prevout["gamma"],
             "spending_key": prevout["spending_key"],
             "scriptSig": "00", # select else path
+            "sequence": nav_locktime, # CLTV requires nSequence == script locktime
         }
         out_params: dict[str, Any] = {
             "amount": navoshi_output_value,
             "address": output_addr,
-            "locktime": locktime,
         }
         params = [[in_params], [out_params]]
         txn = self.rpc("createblsctrawtransaction", params)
