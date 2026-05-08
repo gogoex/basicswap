@@ -2338,7 +2338,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             )
         elif lock_type == TxLockTypes.ABS_LOCK_BLOCKS:
             # TODO: range?
-            ensure(not coin_from_has_csv or not coin_to_has_csv, "Should use CSV.")
+            if coin_from != Coins.NAV:
+                ensure(not coin_from_has_csv or not coin_to_has_csv, "Should use CSV.")
             ensure(lock_value >= 10 and lock_value <= 1000, "Invalid lock_value blocks")
         else:
             raise ValueError("Unknown locktype")
@@ -3838,8 +3839,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         return events
 
     def getLockValue(self, ci_from, offer) -> int:
-        if offer.lock_type == TxLockTypes.ABS_LOCK_BLOCKS:
-            lock_value = ci_from.getChainHeight() + offer.lock_value
+        if offer.lock_type == TxLockTypes.ABS_LOCK_BLOCKS or ci_from.coin_type() == Coins.NAV:
+            nav_lock_value = 10 if ci_from.coin_type() == Coins.NAV else offer.lock_value  # TODO NAV: use offer.lock_value once UI sets blocks correctly
+            lock_value = ci_from.getChainHeight() + nav_lock_value
             self.log.info("getLockValue lock_type is ABS_LOCK_BLOCKS, {lock_value=}")
         else:
             lock_value = self.getTime() + offer.lock_value
@@ -7398,7 +7400,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 )
                 # State will update when spend is detected
             except Exception as ex:
-                if ci_from.isTxNonFinalError(str(ex)) is False:
+                if ci_from.isTxNonFinalError(str(ex)):
                     self.log.warning(
                         f"Error trying to submit initiate refund txn: {ex}"
                     )

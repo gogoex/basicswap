@@ -255,7 +255,8 @@ class NAVInterface(BTCInterface):
         1770743852
         """
         if is_nav:
-            locktime_bytes = script[91:95]
+            push_size = script[90]
+            locktime_bytes = script[91:91 + push_size]
         else:
             push_size = script[64]
             locktime_bytes = script[65:65 + push_size]
