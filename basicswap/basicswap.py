@@ -1486,11 +1486,14 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 )
             if c == Coins.NAV:
                 try:
+                    min_bal = self.coin_clients[c].get(
+                        "min_wallet_balance", chainparams[c].get("min_wallet_balance", 0.0001)
+                    )
                     balance = ci.getWalletInfo().get("balance", 0.0)
-                    if balance < 0.0001:
+                    if balance < min_bal:
                         raise ValueError(
                             f"Navio wallet balance ({balance:.8f} NAV) too low to pay redeem fees. "
-                            f"Minimum 0.0001 NAV required."
+                            f"Minimum {min_bal:.8f} NAV required."
                         )
                 except ValueError:
                     raise
