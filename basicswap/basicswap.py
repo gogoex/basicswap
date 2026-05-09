@@ -2319,7 +2319,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     "Both coins need CSV activated.",
                 )
         elif lock_type == TxLockTypes.SEQUENCE_LOCK_BLOCKS:
-            ensure(lock_value >= 5 and lock_value <= 1000, "Invalid lock_value blocks")
+            ensure(lock_value >= 1 and lock_value <= 1000, "Invalid lock_value blocks")  # TODO NAV: min was 5, lowered to 1 for NAV testing
             if swap_type == SwapTypes.XMR_SWAP:
                 reverse_bid: bool = self.is_reverse_ads_bid(coin_from, coin_to)
                 itx_coin_has_csv = coin_to_has_csv if reverse_bid else coin_from_has_csv
@@ -3841,7 +3841,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
     def getLockValue(self, ci_from, offer) -> int:  
         # TODO NAV: fix this after testing
         if offer.lock_type == TxLockTypes.SEQUENCE_LOCK_TIME and ci_from.coin_type() == Coins.NAV:
-            lock_value = ci_from.getChainHeight() + 10
+            lock_value = ci_from.getChainHeight() + 1
         elif offer.lock_type == TxLockTypes.ABS_LOCK_BLOCKS:
             lock_value = ci_from.getChainHeight() + offer.lock_value
             self.log.info("getLockValue lock_type is ABS_LOCK_BLOCKS, {lock_value=}")
