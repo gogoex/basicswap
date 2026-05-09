@@ -3838,10 +3838,12 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         return events
 
-    def getLockValue(self, ci_from, offer) -> int:
-        if offer.lock_type == TxLockTypes.ABS_LOCK_BLOCKS or ci_from.coin_type() == Coins.NAV:
-            nav_lock_value = 10 if ci_from.coin_type() == Coins.NAV else offer.lock_value  # TODO NAV: use offer.lock_value once UI sets blocks correctly
-            lock_value = ci_from.getChainHeight() + nav_lock_value
+    def getLockValue(self, ci_from, offer) -> int:  
+        # TODO NAV: fix this after testing
+        if offer.lock_type == TxLockTypes.SEQUENCE_LOCK_TIME and ci_from.coin_type() == Coins.NAV:
+            lock_value = ci_from.getChainHeight() + 10
+        elif offer.lock_type == TxLockTypes.ABS_LOCK_BLOCKS:
+            lock_value = ci_from.getChainHeight() + offer.lock_value
             self.log.info("getLockValue lock_type is ABS_LOCK_BLOCKS, {lock_value=}")
         else:
             lock_value = self.getTime() + offer.lock_value
@@ -5825,7 +5827,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         # finalize locktime
         locktime: int = 0
-        if (
+        if offer.lock_type == TxLockTypes.SEQUENCE_LOCK_TIME and coin_type == Coins.NAV:
+            locktime = lock_value
+            self.log.info(f"---> NAV refund tx locktime from fake script: {locktime=}  # TODO NAV delete this later")
+        elif (
             offer.lock_type == TxLockTypes.ABS_LOCK_BLOCKS
             or offer.lock_type == TxLockTypes.ABS_LOCK_TIME
         ):
@@ -7137,6 +7142,19 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                             bid.initiate_tx.txid = bytes.fromhex(outid)
                             initiate_txnid_hex = outid
                             save_bid = True
+                elif (
+                    coin_from == Coins.NAV
+                    and bid.getITxState() == TxStates.TX_SENT
+                    and bid.initiate_tx.conf is not None
+                    and bid.initiate_tx.conf >= 1
+                ):
+                    # ITx was previously confirmed but UTXO now gone — likely refunded
+                    if ci_from.isHTLCTxnSpent(bid.initiate_tx.script):
+                        self.log.info(f"NAV ITx spent (refunded) in BID_ACCEPTED for bid {self.log.id(bid_id)}, marking TX_REFUNDED")
+                        bid.setITxState(TxStates.TX_REFUNDED)
+                        bid.setState(BidStates.SWAP_COMPLETED)
+                        self.saveBid(bid_id, bid)
+                        return True
 
             if bid.initiate_tx.conf != last_initiate_txn_conf:
                 save_bid = True
