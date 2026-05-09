@@ -471,6 +471,9 @@
   {% if data.rate_var==true %}
   <input type="hidden" name="rate_var" value="rv">
 {% endif %}
+  {% if data.coin_from | int == 14 or data.coin_to | int == 14 %}
+  <input type="hidden" name="lockblocks" value="{{ data.lockblocks | default(3840) }}">
+  {% endif %}
 </form>
   <script src="static/js/pages/offer-new-page.js"></script>
 </div>
