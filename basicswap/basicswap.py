@@ -2636,6 +2636,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 message_nets=msg_buf.message_nets,
             )
             offer.setState(OfferStates.OFFER_SENT)
+            if "lock_blocks" in extra_options:
+                offer.lock_blocks = extra_options["lock_blocks"]
 
             if swap_type == SwapTypes.XMR_SWAP:
                 xmr_offer.offer_id = offer_id
@@ -3841,7 +3843,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
     def getLockValue(self, ci_from, offer) -> int:  
         # TODO NAV: fix this after testing
         if offer.lock_type == TxLockTypes.SEQUENCE_LOCK_TIME and ci_from.coin_type() == Coins.NAV:
-            lock_value = ci_from.getChainHeight() + 2
+            nav_blocks = offer.lock_blocks if offer.isSet("lock_blocks") else 3840
+            lock_value = ci_from.getChainHeight() + nav_blocks
         elif offer.lock_type == TxLockTypes.ABS_LOCK_BLOCKS:
             lock_value = ci_from.getChainHeight() + offer.lock_value
             self.log.info("getLockValue lock_type is ABS_LOCK_BLOCKS, {lock_value=}")

@@ -13,7 +13,7 @@ from enum import IntEnum, auto
 from typing import Optional
 
 
-CURRENT_DB_VERSION = 34  # TODO NAV: bumped from 32 to 34 for nav_redeem_addr rename; bump again when rebasing to master
+CURRENT_DB_VERSION = 35  # TODO NAV: bumped for lock_blocks_from column; bump again when rebasing to master
 CURRENT_DB_DATA_VERSION = 7
 
 
@@ -188,6 +188,7 @@ class Offer(Table):
     message_nets = Column("string")
 
     # Local fields
+    lock_blocks = Column("integer")  # TODO NAV: NAV HTLC CLTV block offset (not in SMSG)
     auto_accept_bids = Column("bool")
     was_sent = Column("bool")  # Sent by node
     withdraw_to_addr = Column(

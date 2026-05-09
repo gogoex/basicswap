@@ -334,6 +334,18 @@
                       {% endif %}
                     </div>
                     {% endif %}
+                    {% if data.coin_from | int == 14 or data.coin_to | int == 14 %}
+                    <div class="w-full md:w-1/2 p-3">
+                      <p class="mb-1.5 font-medium text-base text-coolGray-800 dark:text-white">NAV Lock Blocks</p>
+                      <div class="relative">
+                        <div class="flex absolute inset-y-0 left-0 items-center pl-3 pointer-events-none">
+                        {{ input_time_svg | safe }}
+                      </div>
+                      <input class="pl-10 hover:border-blue-500 pl-10 bg-gray-50 text-gray-900 appearance-none pr-10 dark:bg-gray-500 dark:text-white border border-gray-300 dark:border-gray-400 dark:text-gray-50 dark:placeholder-white text-sm rounded-lg outline-none focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 focus:ring-0" type="number" name="lockblocks" min="1" max="11520" value="{{ data.lockblocks | default(3840) }}">
+                      </div>
+                      <div class="text-sm text-gray-500 mt-1.5 dark:text-white">(NAV HTLC refund locktime in blocks)</div>
+                    </div>
+                    {% endif %}
                   </div>
                 </div>
               </div>

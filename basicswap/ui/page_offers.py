@@ -242,6 +242,13 @@ def parseOfferFormData(swap_client, form_data, page_data, options={}):
     elif have_data_entry(form_data, "lockseconds"):
         parsed_data["lock_seconds"] = int(get_data_entry(form_data, "lockseconds"))
 
+    if have_data_entry(form_data, "lockblocks"):
+        try:
+            page_data["lockblocks"] = int(get_data_entry(form_data, "lockblocks"))
+            parsed_data["lock_blocks"] = page_data["lockblocks"]
+        except Exception:
+            errors.append("Invalid lockblocks value")
+
     if have_data_entry(form_data, "validhrs"):
         page_data["validhrs"] = int(get_data_entry(form_data, "validhrs"))
         parsed_data["valid_for_seconds"] = page_data["validhrs"] * 60 * 60
@@ -343,6 +350,9 @@ def postNewOfferFromParsed(swap_client, parsed_data):
             lock_type = TxLockTypes.ABS_LOCK_TIME
 
     extra_options = {}
+
+    if "lock_blocks" in parsed_data:
+        extra_options["lock_blocks"] = parsed_data["lock_blocks"]
 
     if "fee_from_conf" in parsed_data:
         extra_options["from_fee_conf_target"] = parsed_data["fee_from_conf"]
@@ -477,6 +487,7 @@ def page_newoffer(self, url_split, post_string):
         "fee_to_conf": 2,
         "validhrs": 1,
         "lockhrs": 32,
+        "lockblocks": 3840,  # ~32h at 30s/block
         "lockmins": 30,  # used in debug mode
         "debug_ui": swap_client.debug_ui,
         "automation_strat_id": -1,
