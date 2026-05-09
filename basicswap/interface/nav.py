@@ -207,7 +207,7 @@ class NAVInterface(BTCInterface):
             "amount": navoshi_output_value,
             "address": output_addr,
         }
-        params = [[in_params], [out_params], str(nav_locktime)]
+        params = [[in_params], [out_params]]
         txn = self.rpc("createblsctrawtransaction", params)
         self._log.info(f"---> Creating refund txn w/ {params=}")
 
