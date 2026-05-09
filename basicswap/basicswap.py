@@ -9281,10 +9281,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         use_csv = True if offer.lock_type < TxLockTypes.ABS_LOCK_BLOCKS else False
 
-        if coin_from == Coins.NAV:
-            script_lock_val = ci_from.extractHTLCLockVal(bid_accept_data.contract_script, is_nav=False)
-            ensure(script_lock_val > ci_from.getChainHeight(), "NAV script lock height not above chain height")
-        else:
+        if coin_from != Coins.NAV:
             if coin_from in (Coins.DCR,):
                 op_hash = OpCodes.OP_SHA256_DECRED
             else:
@@ -9301,43 +9298,45 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             )
             if not script_valid:
                 raise ValueError("Bad script")
-
             ensure(script_pkhash1 == bid.pkhash_buyer, "pkhash_buyer mismatch")
 
-            if use_csv:
-                expect_sequence = ci_from.getExpectedSequence(
-                    offer.lock_type, offer.lock_value
+        if coin_from == Coins.NAV:
+            script_lock_val = ci_from.extractHTLCLockVal(bid_accept_data.contract_script, is_nav=False)
+            ensure(script_lock_val > ci_from.getChainHeight(), "NAV script lock height not above chain height")
+        elif use_csv:
+            expect_sequence = ci_from.getExpectedSequence(
+                offer.lock_type, offer.lock_value
+            )
+            ensure(script_lock_val == expect_sequence, "sequence mismatch")
+        else:
+            if offer.lock_type == TxLockTypes.ABS_LOCK_BLOCKS:
+                block_header_from = ci_from.getBlockHeaderAt(now)
+                chain_height_at_bid_creation = block_header_from["height"]
+                ensure(
+                    script_lock_val
+                    <= chain_height_at_bid_creation
+                    + offer.lock_value
+                    + atomic_swap_1.ABS_LOCK_BLOCKS_LEEWAY,
+                    "script lock height too high",
                 )
-                ensure(script_lock_val == expect_sequence, "sequence mismatch")
+                ensure(
+                    script_lock_val
+                    >= chain_height_at_bid_creation
+                    + offer.lock_value
+                    - atomic_swap_1.ABS_LOCK_BLOCKS_LEEWAY,
+                    "script lock height too low",
+                )
             else:
-                if offer.lock_type == TxLockTypes.ABS_LOCK_BLOCKS:
-                    block_header_from = ci_from.getBlockHeaderAt(now)
-                    chain_height_at_bid_creation = block_header_from["height"]
-                    ensure(
-                        script_lock_val
-                        <= chain_height_at_bid_creation
-                        + offer.lock_value
-                        + atomic_swap_1.ABS_LOCK_BLOCKS_LEEWAY,
-                        "script lock height too high",
-                    )
-                    ensure(
-                        script_lock_val
-                        >= chain_height_at_bid_creation
-                        + offer.lock_value
-                        - atomic_swap_1.ABS_LOCK_BLOCKS_LEEWAY,
-                        "script lock height too low",
-                    )
-                else:
-                    ensure(
-                        script_lock_val
-                        <= now + offer.lock_value + atomic_swap_1.INITIATE_TX_TIMEOUT,
-                        "script lock time too high",
-                    )
-                    ensure(
-                        script_lock_val
-                        >= now + offer.lock_value - atomic_swap_1.ABS_LOCK_TIME_LEEWAY,
-                        "script lock time too low",
-                    )
+                ensure(
+                    script_lock_val
+                    <= now + offer.lock_value + atomic_swap_1.INITIATE_TX_TIMEOUT,
+                    "script lock time too high",
+                )
+                ensure(
+                    script_lock_val
+                    >= now + offer.lock_value - atomic_swap_1.ABS_LOCK_TIME_LEEWAY,
+                    "script lock time too low",
+                )
 
         ensure(
             self.countMessageLinks(Concepts.BID, bid_id, MessageTypes.BID_ACCEPT) == 0,
