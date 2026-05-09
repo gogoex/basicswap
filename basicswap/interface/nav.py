@@ -242,7 +242,7 @@ class NAVInterface(BTCInterface):
     #     del script
     #     return "tnv14adxpa06t5fywwtte3g223ef92plxqm7ls2jxqp5rwef2cz7ppdhx36ck0e42x2dkj92vw3kxfj90zpzy8ymnmqd9x9gc5wq2xv6m5rkxcxz39jpvaan4dw254ayl94h5tuy5pftaczhcrr5exz9ke0cdgr75y6ft5"
 
-    def extractHTLCLocktime(self, script: bytes, is_nav: bool) -> int:
+    def extractHTLCLockVal(self, script: bytes, is_nav: bool) -> int:
         if is_nav:
             push_size = script[90]
             locktime_bytes = script[91:91 + push_size]
@@ -316,9 +316,9 @@ class NAVInterface(BTCInterface):
                     continue
                 spk_bytes = bytes.fromhex(utxo_spk)
                 spk_secret_hash = atomic_swap_1.extractScriptSecretHash(spk_bytes).hex()
-                spk_locktime = self.extractHTLCLocktime(spk_bytes, is_nav=True)
-                self._log.debug(f"getNavLockTxHeight: HTLC UTxO spk_secret_hash={spk_secret_hash} spk_locktime={spk_locktime}")
-                if spk_secret_hash == secret_hash and spk_locktime == locktime:
+                spk_lock_val = self.extractHTLCLockVal(spk_bytes, is_nav=True)
+                self._log.debug(f"getNavLockTxHeight: HTLC UTxO spk_secret_hash={spk_secret_hash} spk_lock_val={spk_lock_val}")
+                if spk_secret_hash == secret_hash and spk_lock_val == locktime:
                     confirmations = utxo.get("confirmations", 0)
                     chain_info = self.rpc("getblockchaininfo")
                     chain_height = chain_info["blocks"]
@@ -550,7 +550,7 @@ class NAVInterface(BTCInterface):
     # TODO NAV write test
     def isHTLCTxnSpent(self, script: bytes) -> bool:
         secret_hash = atomic_swap_1.extractScriptSecretHash(script)
-        locktime = self.extractHTLCLocktime(script, is_nav=False)
+        locktime = self.extractHTLCLockVal(script, is_nav=False)
         self._log.debug(f"isHTLCTxnSpent: secret_hash={secret_hash.hex()} {locktime=} script={script.hex()}")
         try:
             utxos = self.listBlsctUnspent()
@@ -560,8 +560,8 @@ class NAVInterface(BTCInterface):
                     continue
                 spk_bytes = bytes.fromhex(spk)
                 spk_secret_hash = atomic_swap_1.extractScriptSecretHash(spk_bytes)
-                spk_locktime = self.extractHTLCLocktime(spk_bytes, is_nav=True)
-                if secret_hash == spk_secret_hash and locktime == spk_locktime:
+                spk_lock_val = self.extractHTLCLockVal(spk_bytes, is_nav=True)
+                if secret_hash == spk_secret_hash and locktime == spk_lock_val:
                     # UTxO appears in wallet — verify it's still in the confirmed UTXO set.
                     # listblsctunspent on watchonly wallets does not remove a UTxO when it
                     # is spent by an external wallet.  gettxout queries the consensus UTXO

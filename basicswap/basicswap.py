@@ -7111,7 +7111,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             else:
                 if coin_from == Coins.NAV:
                     secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
-                    locktime = ci_from.extractHTLCLocktime(bid.initiate_tx.script, is_nav=False)
+                    locktime = ci_from.extractHTLCLockVal(bid.initiate_tx.script, is_nav=False)
                     found = ci_from.getNavLockTxHeight(
                         bid.initiate_tx.txid,
                         secret_hash.hex(),
@@ -9282,7 +9282,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         use_csv = True if offer.lock_type < TxLockTypes.ABS_LOCK_BLOCKS else False
 
         if coin_from == Coins.NAV:
-            script_lock_val = ci_from.extractHTLCLocktime(bid_accept_data.contract_script, is_nav=False)
+            script_lock_val = ci_from.extractHTLCLockVal(bid_accept_data.contract_script, is_nav=False)
             ensure(script_lock_val > ci_from.getChainHeight(), "NAV script lock height not above chain height")
         else:
             if coin_from in (Coins.DCR,):
