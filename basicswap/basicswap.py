@@ -3918,8 +3918,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             else:
                 self.log.info(f"---> coin from is {coin_from}")
 
-                if offer.lock_type < TxLockTypes.ABS_LOCK_BLOCKS:
-                    # this branch is called
+                if coin_from == Coins.NAV:
+                    lock_value = self.getLockValue(ci_from, offer)
+                    script = ci_from.createFakeNonNavHTLCScript(secret_hash, lock_value)
+                elif offer.lock_type < TxLockTypes.ABS_LOCK_BLOCKS:
                     self.log.info("---> 1 getting expected sequence")
                     sequence = ci_from.getExpectedSequence(
                         offer.lock_type, offer.lock_value

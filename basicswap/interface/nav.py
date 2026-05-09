@@ -207,7 +207,7 @@ class NAVInterface(BTCInterface):
             "amount": navoshi_output_value,
             "address": output_addr,
         }
-        params = [[in_params], [out_params]]
+        params = [[in_params], [out_params], str(nav_locktime)]
         txn = self.rpc("createblsctrawtransaction", params)
         self._log.info(f"---> Creating refund txn w/ {params=}")
 
@@ -600,6 +600,9 @@ class NAVInterface(BTCInterface):
         return False
 
     def isTxNonFinalError(self, err_str: str) -> bool:
+        # non-final-input: UTXO exists but CLTV locktime not yet reached
+        # bad-inputs-unknown: UTXO not found; happens when stored refund tx references
+        #   a pre-aggregation txid that changed after BLSCT tx aggregation on-chain
         return "non-final-input" in err_str or "bad-input-unknown" in err_str or "bad-inputs-unknown" in err_str or "'code': 25" in err_str
     
     def listBlsctUnspent(self) -> list:
