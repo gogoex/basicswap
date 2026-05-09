@@ -3841,7 +3841,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
     def getLockValue(self, ci_from, offer) -> int:  
         # TODO NAV: fix this after testing
         if offer.lock_type == TxLockTypes.SEQUENCE_LOCK_TIME and ci_from.coin_type() == Coins.NAV:
-            lock_value = ci_from.getChainHeight() + 1
+            lock_value = ci_from.getChainHeight() + 2
         elif offer.lock_type == TxLockTypes.ABS_LOCK_BLOCKS:
             lock_value = ci_from.getChainHeight() + offer.lock_value
             self.log.info("getLockValue lock_type is ABS_LOCK_BLOCKS, {lock_value=}")
