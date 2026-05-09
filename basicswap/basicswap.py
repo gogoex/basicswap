@@ -4109,7 +4109,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 msg_buf.contract_script = bytes(script)
 
                 # pkh sent in script is hashed with sha256, Decred expects blake256
-                if bid.pkhash_seller != pkhash_refund:
+                # For NAV coin_from, bidder cannot extract pkhash from fake script — always send it
+                if bid.pkhash_seller != pkhash_refund or Coins(offer.coin_from) == Coins.NAV:
                     msg_buf.pkhash_seller = bid.pkhash_seller
 
                 if Coins(offer.coin_from) == Coins.NAV:
