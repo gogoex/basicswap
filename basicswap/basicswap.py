@@ -2495,6 +2495,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             msg_buf.time_valid = valid_for_seconds
             msg_buf.lock_type = lock_type
             msg_buf.lock_value = lock_value
+            if "lock_blocks" in extra_options:
+                msg_buf.lock_blocks = extra_options["lock_blocks"]
             msg_buf.swap_type = swap_type
             msg_buf.amount_negotiable = extra_options.get("amount_negotiable", False)
             msg_buf.rate_negotiable = extra_options.get("rate_negotiable", False)
