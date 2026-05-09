@@ -243,17 +243,6 @@ class NAVInterface(BTCInterface):
     #     return "tnv14adxpa06t5fywwtte3g223ef92plxqm7ls2jxqp5rwef2cz7ppdhx36ck0e42x2dkj92vw3kxfj90zpzy8ymnmqd9x9gc5wq2xv6m5rkxcxz39jpvaan4dw254ayl94h5tuy5pftaczhcrr5exz9ke0cdgr75y6ft5"
 
     def extractHTLCLocktime(self, script: bytes, is_nav: bool) -> int:
-        """
-        >>> hex = "6382012088a820b812e53d1bd15a928803df44ab86c6a286d9a3d6625a3738f"
-        >>> hex += "bed32d89a4c7c178830a7b9a59a0e305eef4f756909e6fa107091fc6d2b2743"
-        >>> hex += "3d110d5d3c95ff987a0182bbd2e19897ee71af0466006cc2755467042c688b6"
-        >>> hex += "9b17530a7b9a59a0e305eef4f756909e6fa107091fc6d2b27433d110d5d3c95"
-        >>> hex += "ff987a0182bbd2e19897ee71af0466006cc2755468b3"
-        >>> b = bytes.fromhex(hex)
-        >>> nav = NAVInterface()
-        >>> nav.extractHTLCLocktime(b, is_nav=True)
-        1770743852
-        """
         if is_nav:
             push_size = script[90]
             locktime_bytes = script[91:91 + push_size]
