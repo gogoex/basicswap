@@ -9356,11 +9356,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             script=bid_accept_data.contract_script,
         )
 
-        if coin_from != Coins.NAV:
-            if len(bid_accept_data.pkhash_seller) == 20:
-                bid.pkhash_seller = bid_accept_data.pkhash_seller
-            else:
-                bid.pkhash_seller = script_pkhash2
+        if len(bid_accept_data.pkhash_seller) == 20:
+            bid.pkhash_seller = bid_accept_data.pkhash_seller
+        else:
+            bid.pkhash_seller = script_pkhash2
 
         # if offerer is receiving NAV, save bidder's contract pubkey to bid object
         # to later compute blindingKey to compute spendingKey to receive NAV
