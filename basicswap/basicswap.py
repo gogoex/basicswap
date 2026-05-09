@@ -9358,8 +9358,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         if len(bid_accept_data.pkhash_seller) == 20:
             bid.pkhash_seller = bid_accept_data.pkhash_seller
-        elif coin_from == Coins.NAV:
-            bid.pkhash_seller = b'\x00' * 20
         else:
             bid.pkhash_seller = script_pkhash2
 
