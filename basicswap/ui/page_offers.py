@@ -245,7 +245,10 @@ def parseOfferFormData(swap_client, form_data, page_data, options={}):
     if have_data_entry(form_data, "lockblocks"):
         try:
             page_data["lockblocks"] = int(get_data_entry(form_data, "lockblocks"))
-            parsed_data["lock_blocks"] = page_data["lockblocks"]
+            if page_data["lockblocks"] <= 0:
+                errors.append("Invalid lockblocks value")
+            else:
+                parsed_data["lock_blocks"] = page_data["lockblocks"]
         except Exception:
             errors.append("Invalid lockblocks value")
 
@@ -751,6 +754,9 @@ def page_offer(self, url_split, post_string):
             data["lock_value_hr"] = " ({} hours)".format(offer.lock_value / (60 * 60))
         else:
             data["lock_value_hr"] = " ({} minutes)".format(offer.lock_value / 60)
+
+    if offer.lock_blocks:
+        data["lock_blocks"] = offer.lock_blocks
 
     addr_from_label, addr_to_label = swap_client.getAddressLabel(
         [offer.addr_from, offer.addr_to]

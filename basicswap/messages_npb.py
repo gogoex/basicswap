@@ -146,6 +146,7 @@ class OfferMessage(NonProtobufClass):
         19: ("proof_utxos", NPBW_BYTES, 0),
         20: ("auto_accept_type", NPBW_INT, 0),
         21: ("message_nets", NPBW_BYTES, NPBF_STR),
+        22: ("lock_blocks", NPBW_INT, 0),
     }
 
 

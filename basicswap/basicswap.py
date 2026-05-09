@@ -8755,6 +8755,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     smsg_payload_version=msg_payload_version,
                 )
                 offer.setState(OfferStates.OFFER_RECEIVED)
+                offer.lock_blocks = offer_data.lock_blocks
                 self.add(offer, cursor)
 
                 if offer.swap_type == SwapTypes.XMR_SWAP:
