@@ -1486,9 +1486,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 )
             if c == Coins.NAV:
                 try:
-                    min_bal = self.coin_clients[c].get(
-                        "min_wallet_balance", chainparams[c].get("min_wallet_balance", 0.0001)
-                    )
+                    fee_rate, _ = ci.get_fee_rate()
+                    min_bal = (fee_rate * ci.getHTLCSpendTxVSize()) / 1000 * 1.3
                     balance = ci.getWalletInfo().get("balance", 0.0)
                     if balance < min_bal:
                         raise ValueError(

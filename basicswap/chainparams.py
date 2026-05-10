@@ -473,7 +473,6 @@ chainparams = {
         "has_csv": True,
         "has_segwit": True,
         "has_multiwallet": False,
-        "min_wallet_balance": 0.0001,
         "mainnet": {
             "rpcport": 44444,
             "pubkey_address": 53,
