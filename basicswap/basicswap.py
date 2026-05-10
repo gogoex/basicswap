@@ -6144,6 +6144,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             return
 
         bid = self.swaps_in_progress[bid_id][0]
+        if bid.was_received:
+            self.log.debug(f"processNavSecretReveal: offerer ignoring own reveal for bid {self.log.id(bid_id)}")
+            return
         bid.recovered_secret = secret
         # NAV PTx was spent by the offerer to reveal the secret — mark it redeemed
         if bid.participate_tx:
