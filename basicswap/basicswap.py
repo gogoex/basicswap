@@ -5407,7 +5407,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             nav_addr_refund = self.getReceiveAddressFromPool(coin_to, bid_id, TxTypes.PTX_REFUND, None)
             bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
             buyer_privkey = self.getContractPrivkey(bid_date, bid.contract_count)
-            lock_value = ci.getParticipateLockValue(bid, offer, bid_id, self.ci(offer.coin_from))
+            lock_value = ci.getParticipateLockValue(offer)
             blinding_key = ci.deriveBlindingKey(buyer_privkey, bid.seller_contract_pubkey)
             txn_funded, vout_index = ci.createInitiateTxn(
                 nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key, amount_to,
@@ -7241,15 +7241,13 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             )
             if coin_to == Coins.NAV:
                 secret_hash = atomic_swap_1.extractScriptSecretHash(bid.participate_tx.script)
-                # bid.participate_tx.script is a CSV-based fake script; use getParticipateLockValue
-                # to derive the actual CLTV absolute locktime used in the real NAV BLSCT HTLC.
-                lock_value = ci_to.getParticipateLockValue(bid, offer, bid_id, self.ci(offer.coin_from))
+                lock_val = ci_to.extractHTLCLockVal(bid.participate_tx.script, is_nav=False)
                 found = ci_to.getNavLockTxHeight(
                     participate_txid,
                     secret_hash.hex(),
                     bid.amount_to,
                     bid.chain_b_height_start,
-                    locktime=lock_value,
+                    lock_val=lock_val,
                 )
             else:
                 if ci_to.using_segwit():

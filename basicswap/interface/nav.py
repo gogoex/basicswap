@@ -294,15 +294,15 @@ class NAVInterface(BTCInterface):
         dest_address,
         bid_amount,
         rescan_from,
-        locktime: int = 0,
+        lock_val: int = 0,
     ):
         """BLSCT-specific lock tx lookup.
-        dest_address is the secret_hash hex. locktime is the BLSCT absolute
-        timestamp extracted from the fake script stored in bid.initiate_tx.script,
-        used to discriminate between UTxOs sharing the same secret_hash (e.g. in
-        test environments where the Particl HD wallet reuses the same secret)."""
+        dest_address is the secret_hash hex. lock_val is the NAV CLTV lock block
+        height extracted from the fake participate script, used to discriminate
+        between UTxOs sharing the same secret_hash (e.g. in test environments
+        where the Particl HD wallet reuses the same secret)."""
         del bid_amount, rescan_from, txid
-        self._log.info(f"---> getNavLockTxHeight: {dest_address=} {locktime=}")
+        self._log.info(f"---> getNavLockTxHeight: {dest_address=} {lock_val=}")
         if not dest_address:
             return None
 
@@ -318,7 +318,7 @@ class NAVInterface(BTCInterface):
                 spk_secret_hash = atomic_swap_1.extractScriptSecretHash(spk_bytes).hex()
                 spk_lock_val = self.extractHTLCLockVal(spk_bytes, is_nav=True)
                 self._log.debug(f"getNavLockTxHeight: HTLC UTxO spk_secret_hash={spk_secret_hash} spk_lock_val={spk_lock_val}")
-                if spk_secret_hash == secret_hash and spk_lock_val == locktime:
+                if spk_secret_hash == secret_hash and spk_lock_val == lock_val:
                     confirmations = utxo.get("confirmations", 0)
                     chain_info = self.rpc("getblockchaininfo")
                     chain_height = chain_info["blocks"]
@@ -346,13 +346,13 @@ class NAVInterface(BTCInterface):
         )
         return address
 
-    def getParticipateLockValue(self, bid, offer, bid_id, ci_from) -> int:
+    def getParticipateLockValue(self, offer) -> int:
         itx_lock_time_half_in_blocks = offer.lock_value // 2 // 30  # half of ITX duration; 30s NAV block time
         if offer.isSet("lock_blocks"):
             nav_blocks = min(offer.lock_blocks, itx_lock_time_half_in_blocks)
         else:
             nav_blocks = itx_lock_time_half_in_blocks
-        return bid.initiate_tx.chain_height + nav_blocks
+        return self.getChainHeight() + nav_blocks
 
     def getPrevOutInfoFromOffChainTxn(self, txn_hex: str, secret_hash: bytes) -> PrevOutInfo:
         txjs = self.rpc_wallet("decodeblsctrawtransaction", [txn_hex])
