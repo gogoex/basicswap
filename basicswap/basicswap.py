@@ -7438,8 +7438,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                         f"Error trying to submit initiate refund txn: {ex}"
                     )
 
+        # NAV BLSCT outputs unspendable from mempool; require TX_CONFIRMED before refund
+        ptx_refund_states = (TxStates.TX_CONFIRMED,) if coin_to == Coins.NAV else (TxStates.TX_SENT, TxStates.TX_CONFIRMED)
         if (
-            bid.getPTxState() in (TxStates.TX_SENT, TxStates.TX_CONFIRMED)
+            bid.getPTxState() in ptx_refund_states
             and bid.participate_txn_refund is not None
         ):
             try:

@@ -580,9 +580,8 @@ class NAVInterface(BTCInterface):
         return False
 
     def isTxNonFinalError(self, err_str: str) -> bool:
-        # non-final-input: UTXO exists but CLTV locktime not yet reached
-        # bad-inputs-unknown: UTXO not found; happens when stored refund tx references
-        #   a pre-aggregation txid that changed after BLSCT tx aggregation on-chain
+        # non-final-input: refund submitted before CLTV locktime expires
+        # bad-inputs-unknown: refund input not in UTXO set; PTX still in mempool (BLSCT outputs unspendable until confirmed)
         return "non-final-input" in err_str or "bad-input-unknown" in err_str or "bad-inputs-unknown" in err_str or "'code': 25" in err_str
     
     def listBlsctUnspent(self) -> list:
