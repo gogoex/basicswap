@@ -345,6 +345,21 @@
                       </div>
                       <div class="text-sm text-gray-500 mt-1.5 dark:text-white">(NAV HTLC refund locktime in blocks)</div>
                     </div>
+                    <script>
+                    (function() {
+                      var lockhrsEl = document.querySelector('input[name="lockhrs"]');
+                      var lockblocksEl = document.querySelector('input[name="lockblocks"]');
+                      if (!lockhrsEl || !lockblocksEl) return;
+                      {% if data.coin_to | int == 14 %}
+                      var blocksPerHr = 3600 / 30 / 2;  // X→NAV PTX: half ITX duration; 30s NAV block time
+                      {% else %}
+                      var blocksPerHr = 3600 / 30;  // NAV→X ITX: full duration; 30s NAV block time
+                      {% endif %}
+                      lockhrsEl.addEventListener('input', function() {
+                        lockblocksEl.value = Math.floor((parseFloat(this.value) || 0) * blocksPerHr);
+                      });
+                    })();
+                    </script>
                     {% endif %}
                   </div>
                 </div>

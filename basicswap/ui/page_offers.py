@@ -483,14 +483,16 @@ def page_newoffer(self, url_split, post_string):
 
     messages = []
     err_messages = []
+    default_lockhrs = 32
+    default_lockblocks = default_lockhrs * 3600 // 30 // 2  # X→NAV PTX default: half ITX duration; 30s NAV block time
     page_data = {
         # Set defaults
         "addr_to": -1,
         "fee_from_conf": 2,
         "fee_to_conf": 2,
         "validhrs": 1,
-        "lockhrs": 32,
-        "lockblocks": 3840,  # ~32h at 30s/block
+        "lockhrs": default_lockhrs,
+        "lockblocks": default_lockblocks,
         "lockmins": 30,  # used in debug mode
         "debug_ui": swap_client.debug_ui,
         "automation_strat_id": -1,

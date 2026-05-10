@@ -347,21 +347,12 @@ class NAVInterface(BTCInterface):
         return address
 
     def getParticipateLockValue(self, bid, offer, bid_id, ci_from) -> int:
-        """Calculate the locktime/sequence for the NAV participate tx.
-        The participate tx is locked for half the time of the initiate tx.
-        Returns an absolute block height or timestamp for use as CLTV locktime in createInitiateTxn.
-        NAV HTLC always uses CLTV, so CSV sequence values must be converted to absolute values.
-        """
-        lock_value = offer.lock_value // 2
-        block_header = ci_from.getBlockHeaderFromHeight(bid.initiate_tx.chain_height)
-        initiate_tx_block_time = block_header["time"]
-
-        if offer.lock_type in (TxLockTypes.SEQUENCE_LOCK_BLOCKS, TxLockTypes.ABS_LOCK_BLOCKS):
-            block_header_at = self.getBlockHeaderAt(initiate_tx_block_time, block_after=True)
-            return block_header_at["height"] + lock_value
+        itx_lock_time_half_in_blocks = offer.lock_value // 2 // 30  # half of ITX duration; 30s NAV block time
+        if offer.isSet("lock_blocks"):
+            nav_blocks = min(offer.lock_blocks, itx_lock_time_half_in_blocks)
         else:
-            # SEQUENCE_LOCK_TIME and ABS_LOCK_TIME: return absolute timestamp
-            return initiate_tx_block_time + lock_value
+            nav_blocks = itx_lock_time_half_in_blocks
+        return bid.initiate_tx.chain_height + nav_blocks
 
     def getPrevOutInfoFromOffChainTxn(self, txn_hex: str, secret_hash: bytes) -> PrevOutInfo:
         txjs = self.rpc_wallet("decodeblsctrawtransaction", [txn_hex])
