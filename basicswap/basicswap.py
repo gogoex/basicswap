@@ -7124,7 +7124,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                         secret_hash.hex(),
                         bid.amount,
                         bid.chain_a_height_start,
-                        locktime=locktime,
+                        lock_val=locktime,
                     )
                 else:
                     if ci_from.using_segwit():
