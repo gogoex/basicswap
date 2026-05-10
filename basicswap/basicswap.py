@@ -6212,11 +6212,15 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         ensure(tx_data_funded_bytes is not None, "NAV_PTX_IMPORT missing tx_data_funded")
         ci_nav.stashPtxDataFunded(bid_id, tx_data_funded_bytes)
         self.log.info(f"Stashed NAV PTX tx_data_funded for bid {self.log.id(bid_id)}")
-        ensure(bid.participate_tx is not None, "NAV_PTX_IMPORT received but participate_tx not yet created")
-        ensure(bid.participate_tx.tx_data_funded is None, "NAV PTX tx_data_funded already set")
-        bid.participate_tx.tx_data_funded = tx_data_funded_bytes
-        self.saveBid(bid_id, bid)
-        self.log.info(f"Persisted NAV PTX tx_data_funded to DB for bid {self.log.id(bid_id)}")
+        if bid.participate_tx is not None:
+            if bid.participate_tx.tx_data_funded is None:
+                bid.participate_tx.tx_data_funded = tx_data_funded_bytes
+                self.saveBid(bid_id, bid)
+                self.log.info(f"Persisted NAV PTX tx_data_funded to DB for bid {self.log.id(bid_id)}")
+            else:
+                self.log.warning(f"NAV PTX tx_data_funded already set for bid {self.log.id(bid_id)}")
+        else:
+            self.log.info(f"NAV PTX tx_data_funded stashed; initiateTxnConfirmed will pick it up for bid {self.log.id(bid_id)}")
 
     def processNavItxImport(self, msg) -> None:
         """Receive NAV ITX BLSCT HTLC params from offerer (bid acceptor).
