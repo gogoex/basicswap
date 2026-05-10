@@ -413,8 +413,8 @@ class NAVInterface(BTCInterface):
                     confirmed += amount
                 else:
                     unconfirmed += amount
-            rv["balance"] = confirmed
-            rv["unconfirmed_balance"] = unconfirmed
+            rv["balance"] = round(confirmed, 8)
+            rv["unconfirmed_balance"] = round(unconfirmed, 8)
         except Exception as e:
             self._log.warning(f"NAV getWalletInfo listblsctunspent failed: {e}")
         return rv
