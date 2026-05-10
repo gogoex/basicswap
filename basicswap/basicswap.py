@@ -7353,10 +7353,14 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     f"NAV participate tx spend check for bid {self.log.id(bid_id)}: {is_ptx_spent=}"
                 )
                 if is_ptx_spent:
-                    self.log.info(
-                        f"NAV participate tx spent for bid {self.log.id(bid_id)}, marking TX_REDEEMED"
-                    )
-                    bid.setPTxState(TxStates.TX_REDEEMED)
+                    events = self.getEvents(int(Concepts.BID), bid_id)
+                    ptx_refund_published = any(e.event_type == int(EventLogTypes.PTX_REFUND_PUBLISHED) for e in events)
+                    if ptx_refund_published:
+                        self.log.info(f"NAV PTX refunded for bid {self.log.id(bid_id)}, marking TX_REFUNDED")
+                        bid.setPTxState(TxStates.TX_REFUNDED)
+                    else:
+                        self.log.info(f"NAV PTX redeemed for bid {self.log.id(bid_id)}, marking TX_REDEEMED")
+                        bid.setPTxState(TxStates.TX_REDEEMED)
                     save_bid = True
         elif state == BidStates.BID_ERROR:
             # Wait for user input
