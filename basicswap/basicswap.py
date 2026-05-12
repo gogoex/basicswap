@@ -6008,7 +6008,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             bid.participate_tx = SwapTx(
                 bid_id=bid_id,
                 tx_type=TxTypes.PTX,
-                script=participate_script,
+                script=None if Coins(offer.coin_to) == Coins.NAV else participate_script,
             )
             if Coins(offer.coin_to) == Coins.NAV:
                 tx_data = self.ci(offer.coin_to).popPtxDataFunded(bid_id)
@@ -6215,12 +6215,12 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         ci_nav.stashPtxDataFunded(bid_id, tx_data_funded_bytes)
         self.log.info(f"Stashed NAV PTX tx_data_funded for bid {self.log.id(bid_id)}")
         if bid.participate_tx is not None:
+            bid.participate_tx.script = ci_nav.createFakeNonNavHTLCScript(secret_hash, lock_value)
+            self.log.info(f"Updated NAV PTX participate script with lock_value={lock_value} for bid {self.log.id(bid_id)}")
             if bid.participate_tx.tx_data_funded is None:
                 bid.participate_tx.tx_data_funded = tx_data_funded_bytes
-                self.saveBid(bid_id, bid)
-                self.log.info(f"Persisted NAV PTX tx_data_funded to DB for bid {self.log.id(bid_id)}")
-            else:
-                self.log.warning(f"NAV PTX tx_data_funded already set for bid {self.log.id(bid_id)}")
+            self.saveBid(bid_id, bid)
+            self.log.info(f"Persisted NAV PTX participate script and tx_data_funded to DB for bid {self.log.id(bid_id)}")
         else:
             self.log.info(f"NAV PTX tx_data_funded stashed; initiateTxnConfirmed will pick it up for bid {self.log.id(bid_id)}")
 
@@ -7239,15 +7239,18 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 else bid.participate_tx.vout
             )
             if coin_to == Coins.NAV:
-                secret_hash = atomic_swap_1.extractScriptSecretHash(bid.participate_tx.script)
-                lock_val = ci_to.extractHTLCLockVal(bid.participate_tx.script, is_nav=True)
-                found = ci_to.getNavLockTxHeight(
-                    participate_txid,
-                    secret_hash.hex(),
-                    bid.amount_to,
-                    bid.chain_b_height_start,
-                    lock_val=lock_val,
-                )
+                if bid.participate_tx is None or bid.participate_tx.script is None:
+                    found = None
+                else:
+                    secret_hash = atomic_swap_1.extractScriptSecretHash(bid.participate_tx.script)
+                    lock_val = ci_to.extractHTLCLockVal(bid.participate_tx.script, is_nav=False)
+                    found = ci_to.getNavLockTxHeight(
+                        participate_txid,
+                        secret_hash.hex(),
+                        bid.amount_to,
+                        bid.chain_b_height_start,
+                        lock_val=lock_val,
+                    )
             else:
                 if ci_to.using_segwit():
                     p2wsh = ci_to.getScriptDest(bid.participate_tx.script)
