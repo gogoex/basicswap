@@ -7240,7 +7240,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             )
             if coin_to == Coins.NAV:
                 secret_hash = atomic_swap_1.extractScriptSecretHash(bid.participate_tx.script)
-                lock_val = ci_to.extractHTLCLockVal(bid.participate_tx.script, is_nav=False)
+                lock_val = ci_to.extractHTLCLockVal(bid.participate_tx.script, is_nav=True)
                 found = ci_to.getNavLockTxHeight(
                     participate_txid,
                     secret_hash.hex(),
