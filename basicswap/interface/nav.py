@@ -11,7 +11,7 @@ from basicswap.interface.btc import (
 from basicswap.chainparams import Coins
 from typing import Optional, Any, TypedDict
 from basicswap.basicswap_util import TxLockTypes
-from basicswap.util import SerialiseNum
+from basicswap.util import SerialiseNum, TemporaryError
 from basicswap.util.crypto import sha256
 from coincurve.keys import PrivateKey
 import basicswap.protocols.atomic_swap_1 as atomic_swap_1
@@ -589,7 +589,12 @@ class NAVInterface(BTCInterface):
 
     def publishTx(self, tx: bytes):
         self._log.debug(f"---> publishing tx tx={tx.hex()}")
-        res = self.rpc("sendrawtransaction", [tx.hex()])
+        try:
+            res = self.rpc("sendrawtransaction", [tx.hex()])
+        except Exception as e:
+            if self.isTxNonFinalError(str(e)):
+                raise TemporaryError(str(e))
+            raise
         self._log.debug(f"---> result = {res=}")
         return res
 
