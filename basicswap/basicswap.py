@@ -5543,7 +5543,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 f"createRedeemTxn NAV ({'ITx' if is_itx else 'PTx'}): bid {self.log.id(bid.bid_id)}, "
                 f"tx.txid={'None' if nav_tx.txid is None else nav_tx.txid.hex()}, "
                 f"tx.tx_data_funded={'None' if nav_tx.tx_data_funded is None else f'{len(nav_tx.tx_data_funded)}B'}, "
-                f"stash={'present' if ci._ptx_data.get(bid.bid_id) is not None else 'None'}"
+                f"stash={ci.getPtxData(bid.bid_id)}"
             )
             secret_hash = atomic_swap_1.extractScriptSecretHash(txn_script)
             if is_itx:
@@ -5556,7 +5556,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                         tx_data_funded = db_bid.initiate_tx.tx_data_funded
                 ensure(tx_data_funded is not None, f"NAV ITX tx_data_funded not available for bid {bid.bid_id.hex()}")
             else:
-                tx_data_funded = nav_tx.tx_data_funded or ci.popPtxDataFunded(bid.bid_id)
+                tx_data_funded = nav_tx.tx_data_funded
                 if tx_data_funded is None:
                     # Fallback: reload from DB in case in-memory value was lost (e.g. after restart)
                     self.log.warning(f"createRedeemTxn: PTx tx_data_funded not in memory for bid {self.log.id(bid.bid_id)}, reloading from DB")
@@ -7228,7 +7228,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             )
             if coin_to == Coins.NAV:
                 if bid.participate_tx is not None and bid.participate_tx.script is None:
-                    stashed = ci_to.popPtxData(bid_id)
+                    stashed = ci_to.getPtxData(bid_id)
                     if stashed is not None:
                         bid.participate_tx.script, bid.participate_tx.tx_data_funded = stashed
                         save_bid = True
@@ -7391,6 +7391,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 )
 
                 bid.setState(BidStates.SWAP_COMPLETED)
+                if coin_to == Coins.NAV:
+                    ci_to.clearPtxData(bid_id)
                 self.saveBid(bid_id, bid)
                 try:
                     self.notify(

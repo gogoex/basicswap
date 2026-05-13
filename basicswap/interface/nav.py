@@ -31,12 +31,6 @@ class NAVInterface(BTCInterface):
         super(NAVInterface, self).__init__(coin_settings, network, swap_client)
         self._ptx_data: dict = {}
 
-    def stashPtxData(self, bid_id: bytes, script: bytearray, tx_data_funded: bytes) -> None:
-        self._ptx_data[bid_id] = (script, tx_data_funded)
-
-    def popPtxData(self, bid_id: bytes) -> tuple | None:
-        return self._ptx_data.pop(bid_id, None)
-
     def checkExpectedSeed(self, expect_seedid: str) -> bool:
         RPC_WALLET_BLANK = -37
         try:
@@ -47,34 +41,8 @@ class NAVInterface(BTCInterface):
             raise
         return expect_seedid == actual_seedid
 
-    def _createRawFundedTransaction(
-        self,
-        addr_to: str,
-        amount: int, # amount in navoshis
-        script: Optional[bytearray] = None,
-        sub_fee: bool = False,
-        lock_unspents: bool = True,
-    ) -> str:
-        del sub_fee
-        del lock_unspents
-        self._log.info(f"---> in _createRawFundedTransaciton: {addr_to=}, {amount=}")
-
-        param: dict[str, Any] = {
-            "address": addr_to,
-            "amount": amount,
-        }
-        if script is not None:
-            param["script"] = bytes(script).hex()
-            self._log.info(f"---> Added script")
-        self._log.info(f"---> {param=}")
-        params = [param]
-
-        txn = self.rpc("createblsctrawtransaction", [[], params])
-        self._log.info(f"---> Created raw transaction with {params=}, {txn}")
-
-        txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn])
-        self._log.info(f"---> Created raw funded transaction")
-        return txn_funded
+    def clearPtxData(self, bid_id: bytes) -> None:
+        self._ptx_data.pop(bid_id, None)
 
     def createFakeNonNavHTLCScript(self, secret_hash: bytearray, locktime: int) -> bytearray:
         """
@@ -91,24 +59,6 @@ class NAVInterface(BTCInterface):
             locktime_bytes
         )
         return bytearray(fake_script)
-
-    def createRawFundedTransaction(
-        self,
-        addr_to: str,
-        amount: int,
-        sub_fee: bool = False,
-        lock_unspents: bool = True,
-    ) -> str:
-        return self._createRawFundedTransaction(
-            addr_to,
-            amount,
-            None,
-            sub_fee,
-            lock_unspents)
-
-    def createRawSignedTransaction(self, addr_to, amount) -> str:
-        txn_funded = self._createRawFundedTransaction(addr_to, amount)
-        return self.rpc_wallet("signblsctrawtransaction", [txn_funded])
 
     def createInitiateTxn(
         self,
@@ -145,9 +95,56 @@ class NAVInterface(BTCInterface):
                 break
         if vout_index is None:
             raise ValueError(f"Failed to find vout with HTLC script")
-        self._log.info(f"vout index is {vout_index}") 
+        self._log.info(f"vout index is {vout_index}")
 
         return txn_funded, vout_index
+
+    def _createRawFundedTransaction(
+        self,
+        addr_to: str,
+        amount: int, # amount in navoshis
+        script: Optional[bytearray] = None,
+        sub_fee: bool = False,
+        lock_unspents: bool = True,
+    ) -> str:
+        del sub_fee
+        del lock_unspents
+        self._log.info(f"---> in _createRawFundedTransaciton: {addr_to=}, {amount=}")
+
+        param: dict[str, Any] = {
+            "address": addr_to,
+            "amount": amount,
+        }
+        if script is not None:
+            param["script"] = bytes(script).hex()
+            self._log.info(f"---> Added script")
+        self._log.info(f"---> {param=}")
+        params = [param]
+
+        txn = self.rpc("createblsctrawtransaction", [[], params])
+        self._log.info(f"---> Created raw transaction with {params=}, {txn}")
+
+        txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn])
+        self._log.info(f"---> Created raw funded transaction")
+        return txn_funded
+
+    def createRawFundedTransaction(
+        self,
+        addr_to: str,
+        amount: int,
+        sub_fee: bool = False,
+        lock_unspents: bool = True,
+    ) -> str:
+        return self._createRawFundedTransaction(
+            addr_to,
+            amount,
+            None,
+            sub_fee,
+            lock_unspents)
+
+    def createRawSignedTransaction(self, addr_to, amount) -> str:
+        txn_funded = self._createRawFundedTransaction(addr_to, amount)
+        return self.rpc_wallet("signblsctrawtransaction", [txn_funded])
 
     def createRedeemTxn(
         self,
@@ -381,6 +378,9 @@ class NAVInterface(BTCInterface):
         proof_hex = result["proof"]
         return ("blsct_balance_proof", proof_hex, [])
 
+    def getPtxData(self, bid_id: bytes) -> tuple | None:
+        return self._ptx_data.get(bid_id, None)
+
     def getSeedHash(self, seed: bytes) -> bytes:
         return seed
 
@@ -460,7 +460,7 @@ class NAVInterface(BTCInterface):
             OP_DROP
             <48-byte address_b>
         OP_ENDIF
-        OP_BLSCHECKSIG        
+        OP_BLSCHECKSIG
 
         >>> hex = "6382012088a820b812e53d1bd15a928803df44ab86c6a286d9a3d6625a3738f"
         >>> hex += "bed32d89a4c7c178830a7b9a59a0e305eef4f756909e6fa107091fc6d2b2743"
@@ -497,7 +497,7 @@ class NAVInterface(BTCInterface):
             nonlocal pos
             pos = pos + n*2
             return pos <= len(script)
-        
+
         def consume_locktime() -> bool:
             nonlocal pos
             push_size = int(script[pos:pos + 2], 16)
@@ -505,7 +505,7 @@ class NAVInterface(BTCInterface):
 
         def all_consumed() -> bool:
             return pos == len(script)
-    
+
         return (
             # 63 (OP_IF)
             # 82 (OP_SIZE)
@@ -513,22 +513,22 @@ class NAVInterface(BTCInterface):
             # 88 (OP_EQUALVERIFY)
             # a8 (OP_SHA256)
             # 20 (Data Length 32)
-            consume("6382012088a820") and 
+            consume("6382012088a820") and
             # secret hash
             skip(32) and
             # 88 (OP_EQUALVERIFY)
             # 30 (Data Length 48)
-            consume("8830") and 
+            consume("8830") and
             # address_a
             skip(48) and
             # 67 (OP_ELSE)
-            consume("67") and 
+            consume("67") and
             # 1-4 byte locktime
             consume_locktime() and
             # b1 (OP_CHECKLOCKTIMEVERIFY)
             # 75 (OP_DROP
             # 30 (Data Length 48)
-            consume("b17530") and 
+            consume("b17530") and
             # address_b
             skip(48) and
             # 68 (OP_ENDIF)
@@ -583,7 +583,7 @@ class NAVInterface(BTCInterface):
         # non-final-input: refund submitted before CLTV locktime expires
         # bad-inputs-unknown: refund input not in UTXO set; PTX still in mempool (BLSCT outputs unspendable until confirmed)
         return "non-final-input" in err_str or "bad-input-unknown" in err_str or "bad-inputs-unknown" in err_str or "'code': 25" in err_str
-    
+
     def listBlsctUnspent(self) -> list:
         return self.rpc_wallet("listblsctunspent", [0])
 
@@ -592,12 +592,15 @@ class NAVInterface(BTCInterface):
         res = self.rpc("sendrawtransaction", [tx.hex()])
         self._log.debug(f"---> result = {res=}")
         return res
-    
+
     def signBlsct(self, txn):
         self._log.debug(f"---> signing blsct...")
         signed_txn = self.rpc("signblsctrawtransaction", [txn])
         self._log.debug(f"---> signed blsct {signed_txn=}")
         return signed_txn
+
+    def stashPtxData(self, bid_id: bytes, script: bytearray, tx_data_funded: bytes) -> None:
+        self._ptx_data[bid_id] = (script, tx_data_funded)
 
     def verifyProofOfFunds(self, address, signature, utxos, extra_commit_bytes):
         additional_commitment = extra_commit_bytes.hex()
@@ -619,16 +622,3 @@ class NAVInterface(BTCInterface):
             "validscripts": 1,
         }
         return ro
-
-
-
-
-
-
-
-
-
-
-
-
-
