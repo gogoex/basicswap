@@ -171,7 +171,12 @@ class NAVInterface(BTCInterface):
         self._log.info(f"---> Created raw transaction with {txn=}")
 
         fee = int(prevout["amount"]) - output_value
-        txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn, None, False, fee])
+        try:
+            txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn, None, False, fee])
+        except Exception as e:
+            if "Insufficient funds" in str(e):
+                raise TemporaryError(str(e))
+            raise
         self._log.info(f"---> Created raw funded transaction: {txn_funded=}")
 
         return txn_funded

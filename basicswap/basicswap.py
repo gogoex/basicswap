@@ -8455,6 +8455,14 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     self.logException(err_msg)
 
                     bid_id = linked_id
+                    if self.is_transient_error(ex):
+                        delay = self.get_short_delay_event_seconds()
+                        self.log.warning(
+                            f"checkQueuedActions temporary error for action {action_type} "
+                            f"{self.log.id(linked_id)}, retrying in {delay}s: {ex}"
+                        )
+                        self.createActionInSession(delay, action_type, linked_id, cursor)
+                        continue
                     # Failing to accept a bid should not set an error state as the bid has not begun yet
                     if accepting_bid:
                         self.logEvent(
