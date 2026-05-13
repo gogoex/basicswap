@@ -6010,10 +6010,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 tx_type=TxTypes.PTX,
                 script=None if Coins(offer.coin_to) == Coins.NAV else participate_script,
             )
-            if Coins(offer.coin_to) == Coins.NAV:
-                tx_data = self.ci(offer.coin_to).popPtxDataFunded(bid_id)
-                if tx_data is not None:
-                    bid.participate_tx.tx_data_funded = tx_data
             ci = self.ci(offer.coin_to)
             if ci.watch_blocks_for_scripts() is True:
                 chain_a_block_header = self.ci(
@@ -6212,17 +6208,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         ci_nav.importBlsctScript(params, rescan_from)
         self.log.info(f"Imported NAV PTX HTLC script for bid {self.log.id(bid_id)}")
         ensure(tx_data_funded_bytes is not None, "NAV_PTX_IMPORT missing tx_data_funded")
-        ci_nav.stashPtxDataFunded(bid_id, tx_data_funded_bytes)
-        self.log.info(f"Stashed NAV PTX tx_data_funded for bid {self.log.id(bid_id)}")
-        if bid.participate_tx is not None:
-            bid.participate_tx.script = ci_nav.createFakeNonNavHTLCScript(secret_hash, lock_value)
-            self.log.info(f"Updated NAV PTX participate script with lock_value={lock_value} for bid {self.log.id(bid_id)}")
-            if bid.participate_tx.tx_data_funded is None:
-                bid.participate_tx.tx_data_funded = tx_data_funded_bytes
-            self.saveBid(bid_id, bid)
-            self.log.info(f"Persisted NAV PTX participate script and tx_data_funded to DB for bid {self.log.id(bid_id)}")
-        else:
-            self.log.info(f"NAV PTX tx_data_funded stashed; initiateTxnConfirmed will pick it up for bid {self.log.id(bid_id)}")
+        fake_script = ci_nav.createFakeNonNavHTLCScript(secret_hash, lock_value)
+        ci_nav.stashPtxData(bid_id, fake_script, tx_data_funded_bytes)
+        self.log.info(f"Stashed NAV PTX script and tx_data_funded for bid {self.log.id(bid_id)}")
 
     def processNavItxImport(self, msg) -> None:
         """Receive NAV ITX BLSCT HTLC params from offerer (bid acceptor).
@@ -7239,6 +7227,12 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 else bid.participate_tx.vout
             )
             if coin_to == Coins.NAV:
+                if bid.participate_tx is not None and bid.participate_tx.script is None:
+                    stashed = ci_to.popPtxData(bid_id)
+                    if stashed is not None:
+                        bid.participate_tx.script, bid.participate_tx.tx_data_funded = stashed
+                        save_bid = True
+                        self.log.info(f"Applied stashed NAV PTX script for bid {self.log.id(bid_id)}")
                 if bid.participate_tx is None or bid.participate_tx.script is None:
                     found = None
                 else:
