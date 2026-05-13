@@ -5543,7 +5543,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 f"createRedeemTxn NAV ({'ITx' if is_itx else 'PTx'}): bid {self.log.id(bid.bid_id)}, "
                 f"tx.txid={'None' if nav_tx.txid is None else nav_tx.txid.hex()}, "
                 f"tx.tx_data_funded={'None' if nav_tx.tx_data_funded is None else f'{len(nav_tx.tx_data_funded)}B'}, "
-                f"stash={'present' if ci._ptx_data_funded.get(bid.bid_id) is not None else 'None'}"
+                f"stash={'present' if ci._ptx_data.get(bid.bid_id) is not None else 'None'}"
             )
             secret_hash = atomic_swap_1.extractScriptSecretHash(txn_script)
             if is_itx:
