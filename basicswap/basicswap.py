@@ -5543,7 +5543,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 f"createRedeemTxn NAV ({'ITx' if is_itx else 'PTx'}): bid {self.log.id(bid.bid_id)}, "
                 f"tx.txid={'None' if nav_tx.txid is None else nav_tx.txid.hex()}, "
                 f"tx.tx_data_funded={'None' if nav_tx.tx_data_funded is None else f'{len(nav_tx.tx_data_funded)}B'}, "
-                f"stash={ci.getPtxData(bid.bid_id)}"
+                f"stash={ci.getPtxInfoBidder(bid.bid_id)}"
             )
             secret_hash = atomic_swap_1.extractScriptSecretHash(txn_script)
             if is_itx:
@@ -5992,11 +5992,30 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 )
 
                 ci_to = self.ci(offer.coin_to)
-                txn, nav_ptx_import_payload = self.createParticipateTxn(bid_id, bid, offer, participate_script)
+
+                ptx_info = ci_to.getPtxInfoBidder(bid_id) if Coins(offer.coin_to) == Coins.NAV else None
+
+                if Coins(offer.coin_to) != Coins.NAV or ptx_info is None:
+                    txn, nav_ptx_import_payload = self.createParticipateTxn(bid_id, bid, offer, participate_script)
+                    if Coins(offer.coin_to) == Coins.NAV:
+                        ci_to.stashPtxBidder(bid_id, bid.participate_tx, nav_ptx_import_payload)
+                else:
+                    txn = ptx_info["participate_tx"].tx_data.hex()
+                    nav_ptx_import_payload = ptx_info["nav_ptx_import_payload"]
+                    bid.participate_tx = ptx_info["participate_tx"]
+
+                try:
+                    txid = ci_to.publishTx(bytes.fromhex(txn))
+                except Exception as e:
+                    if isinstance(e, TemporaryError) and Coins(offer.coin_to) == Coins.NAV:
+                        bid.setState(BidStates.BID_ACCEPTED)
+                        bid.setITxState(TxStates.TX_SENT)
+                        bid.participate_tx = None
+                    raise
+
                 if nav_ptx_import_payload is not None:
                     self.sendMessage(bid.bid_addr, offer.addr_from, nav_ptx_import_payload, self.SMSG_SECONDS_IN_HOUR * 2, None)
                     self.log.info(f"Sent NAV_PTX_IMPORT to offer creator for bid {self.log.id(bid_id)}")
-                txid = ci_to.publishTx(bytes.fromhex(txn))
                 self.log.debug(
                     f"Submitted participate tx {self.log.id(txid)} to {ci_to.coin_name()} chain for bid {self.log.id(bid_id)}"
                 )
@@ -6209,7 +6228,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         self.log.info(f"Imported NAV PTX HTLC script for bid {self.log.id(bid_id)}")
         ensure(tx_data_funded_bytes is not None, "NAV_PTX_IMPORT missing tx_data_funded")
         fake_script = ci_nav.createFakeNonNavHTLCScript(secret_hash, lock_value)
-        ci_nav.stashPtxData(bid_id, fake_script, tx_data_funded_bytes)
+        ci_nav.stashPtxOfferer(bid_id, fake_script, tx_data_funded_bytes)
         self.log.info(f"Stashed NAV PTX script and tx_data_funded for bid {self.log.id(bid_id)}")
 
     def processNavItxImport(self, msg) -> None:
@@ -7228,9 +7247,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             )
             if coin_to == Coins.NAV:
                 if bid.participate_tx is not None and bid.participate_tx.script is None:
-                    stashed = ci_to.getPtxData(bid_id)
-                    if stashed is not None:
-                        bid.participate_tx.script, bid.participate_tx.tx_data_funded = stashed
+                    ptx_info = ci_to.getPtxInfoOfferer(bid_id)
+                    if ptx_info is not None:
+                        bid.participate_tx.script = ptx_info["script"]
+                        bid.participate_tx.tx_data_funded = ptx_info["tx_data_funded"]
                         save_bid = True
                         self.log.info(f"Applied stashed NAV PTX script for bid {self.log.id(bid_id)}")
                 if bid.participate_tx is None or bid.participate_tx.script is None:

@@ -22,6 +22,14 @@ class PrevOutInfo(TypedDict):
     gamma: str
     spending_key: str
 
+class PtxInfoBidder(TypedDict):
+    participate_tx: Any
+    nav_ptx_import_payload: str
+
+class PtxInfoOfferer(TypedDict):
+    script: bytearray
+    tx_data_funded: bytes
+
 class NAVInterface(BTCInterface):
     @staticmethod
     def coin_type() -> Coins: # type: ignore[override]
@@ -29,7 +37,8 @@ class NAVInterface(BTCInterface):
 
     def __init__(self, coin_settings, network, swap_client=None):
         super(NAVInterface, self).__init__(coin_settings, network, swap_client)
-        self._ptx_data: dict = {}
+        self._ptx_info_bidder: dict = {}
+        self._ptx_info_offerer: dict = {}
 
     def checkExpectedSeed(self, expect_seedid: str) -> bool:
         RPC_WALLET_BLANK = -37
@@ -42,7 +51,8 @@ class NAVInterface(BTCInterface):
         return expect_seedid == actual_seedid
 
     def clearPtxData(self, bid_id: bytes) -> None:
-        self._ptx_data.pop(bid_id, None)
+        self._ptx_info_bidder.pop(bid_id, None)
+        self._ptx_info_offerer.pop(bid_id, None)
 
     def createFakeNonNavHTLCScript(self, secret_hash: bytearray, locktime: int) -> bytearray:
         """
@@ -383,8 +393,11 @@ class NAVInterface(BTCInterface):
         proof_hex = result["proof"]
         return ("blsct_balance_proof", proof_hex, [])
 
-    def getPtxData(self, bid_id: bytes) -> tuple | None:
-        return self._ptx_data.get(bid_id, None)
+    def getPtxInfoBidder(self, bid_id: bytes) -> PtxInfoBidder | None:
+        return self._ptx_info_bidder.get(bid_id, None)
+
+    def getPtxInfoOfferer(self, bid_id: bytes) -> PtxInfoOfferer | None:
+        return self._ptx_info_offerer.get(bid_id, None)
 
     def getSeedHash(self, seed: bytes) -> bytes:
         return seed
@@ -609,8 +622,11 @@ class NAVInterface(BTCInterface):
         self._log.debug(f"---> signed blsct {signed_txn=}")
         return signed_txn
 
-    def stashPtxData(self, bid_id: bytes, script: bytearray, tx_data_funded: bytes) -> None:
-        self._ptx_data[bid_id] = (script, tx_data_funded)
+    def stashPtxBidder(self, bid_id: bytes, participate_tx: Any, nav_ptx_import_payload: str) -> None:
+        self._ptx_info_bidder[bid_id] = PtxInfoBidder(participate_tx=participate_tx, nav_ptx_import_payload=nav_ptx_import_payload)
+
+    def stashPtxOfferer(self, bid_id: bytes, script: bytearray, tx_data_funded: bytes) -> None:
+        self._ptx_info_offerer[bid_id] = PtxInfoOfferer(script=script, tx_data_funded=tx_data_funded)
 
     def verifyProofOfFunds(self, address, signature, utxos, extra_commit_bytes):
         additional_commitment = extra_commit_bytes.hex()
