@@ -5542,8 +5542,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             self.log.info(
                 f"createRedeemTxn NAV ({'ITx' if is_itx else 'PTx'}): bid {self.log.id(bid.bid_id)}, "
                 f"tx.txid={'None' if nav_tx.txid is None else nav_tx.txid.hex()}, "
-                f"tx.tx_data_funded={'None' if nav_tx.tx_data_funded is None else f'{len(nav_tx.tx_data_funded)}B'}, "
-                f"stash={ci.getPtxInfoBidder(bid.bid_id)}"
+                f"tx.tx_data_funded={'None' if nav_tx.tx_data_funded is None else f'{len(nav_tx.tx_data_funded)}B'}"
             )
             secret_hash = atomic_swap_1.extractScriptSecretHash(txn_script)
             if is_itx:
@@ -5992,37 +5991,25 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 )
 
                 ci_to = self.ci(offer.coin_to)
-
-                ptx_info = ci_to.getPtxInfoBidder(bid_id) if Coins(offer.coin_to) == Coins.NAV else None
-
-                if Coins(offer.coin_to) != Coins.NAV or ptx_info is None:
-                    txn, nav_ptx_import_payload = self.createParticipateTxn(bid_id, bid, offer, participate_script)
-                    if Coins(offer.coin_to) == Coins.NAV:
-                        ci_to.stashPtxBidder(bid_id, bid.participate_tx, nav_ptx_import_payload)
-                else:
-                    txn = ptx_info["participate_tx"].tx_data.hex()
-                    nav_ptx_import_payload = ptx_info["nav_ptx_import_payload"]
-                    bid.participate_tx = ptx_info["participate_tx"]
-
+                txn, nav_ptx_import_payload = self.createParticipateTxn(bid_id, bid, offer, participate_script)
+                bid.participate_tx.not_published = False
                 try:
                     txid = ci_to.publishTx(bytes.fromhex(txn))
+                    self.log.debug(
+                        f"Submitted participate tx {self.log.id(txid)} to {ci_to.coin_name()} chain for bid {self.log.id(bid_id)}"
+                    )
                 except Exception as e:
-                    if isinstance(e, TemporaryError) and Coins(offer.coin_to) == Coins.NAV:
-                        bid.setState(BidStates.BID_ACCEPTED)
-                        bid.setITxState(TxStates.TX_SENT)
-                        bid.participate_tx = None
-                    raise
+                    if Coins(offer.coin_to) == Coins.NAV:
+                        bid.participate_tx.not_published = True
 
                 if nav_ptx_import_payload is not None:
                     self.sendMessage(bid.bid_addr, offer.addr_from, nav_ptx_import_payload, self.SMSG_SECONDS_IN_HOUR * 2, None)
                     self.log.info(f"Sent NAV_PTX_IMPORT to offer creator for bid {self.log.id(bid_id)}")
-                self.log.debug(
-                    f"Submitted participate tx {self.log.id(txid)} to {ci_to.coin_name()} chain for bid {self.log.id(bid_id)}"
-                )
-                bid.setPTxState(TxStates.TX_SENT)
-                self.logEvent(
-                    Concepts.BID, bid.bid_id, EventLogTypes.PTX_PUBLISHED, "", None
-                )
+                if not bid.participate_tx.not_published:
+                    bid.setPTxState(TxStates.TX_SENT)
+                    self.logEvent(
+                        Concepts.BID, bid.bid_id, EventLogTypes.PTX_PUBLISHED, "", None
+                    )
         else:
             bid.participate_tx = SwapTx(
                 bid_id=bid_id,
@@ -7246,6 +7233,21 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 else bid.participate_tx.vout
             )
             if coin_to == Coins.NAV:
+                if bid.was_sent and bid.participate_tx is not None and bid.participate_tx.not_published:
+                    try:
+                        txid = ci_to.publishTx(bid.participate_tx.tx_data)
+                        self.log.debug(
+                            f"Submitted participate tx {self.log.id(txid)} to {ci_to.coin_name()} chain for bid {self.log.id(bid_id)}"
+                        )
+                        bid.participate_tx.not_published = False
+                        bid.setPTxState(TxStates.TX_SENT)
+                        self.saveBid(bid_id, bid)
+                        return False
+                    except Exception as e:
+                        self.log.warning(
+                            f"Failed to publish NAV PTX for bid {self.log.id(bid_id)}: {e}"
+                        )
+                        return False
                 if bid.participate_tx is not None and bid.participate_tx.script is None:
                     ptx_info = ci_to.getPtxInfoOfferer(bid_id)
                     if ptx_info is not None:

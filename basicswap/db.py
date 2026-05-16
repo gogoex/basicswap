@@ -13,7 +13,7 @@ from enum import IntEnum, auto
 from typing import Optional
 
 
-CURRENT_DB_VERSION = 35  # TODO NAV: bumped for lock_blocks_from column; bump again when rebasing to master
+CURRENT_DB_VERSION = 36  # TODO NAV: bump again when rebasing to master
 CURRENT_DB_DATA_VERSION = 7
 
 
@@ -340,6 +340,7 @@ class SwapTx(Table):
 
     tx_data_funded = Column("blob")
     outid = Column("blob")  # NAV: stable output hash (survives BLSCT aggregation)
+    not_published = Column("integer")  # NAV: PTX created but not yet submitted to mempool
 
     def setState(self, new_state):
         if self.state == new_state:
