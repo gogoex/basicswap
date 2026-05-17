@@ -7245,7 +7245,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                         return False
                     except Exception as e:
                         if "bad-txns-inputs-missingorspent" in str(e):
-                            self.setBidError(bid_id, bid, f"NAV PTX input spent: {e}")
+                            self.setBidError(bid_id, bid, "NAV participate tx failed: input UTXO spent by a different transaction")
                         else:
                             self.log.warning(
                                 f"Failed to publish NAV PTX for bid {self.log.id(bid_id)}: {e}"
