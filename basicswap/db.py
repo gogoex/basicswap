@@ -12,7 +12,7 @@ import time
 from enum import IntEnum, auto
 from typing import Optional
 
-CURRENT_DB_VERSION = 34
+CURRENT_DB_VERSION = 35
 CURRENT_DB_DATA_VERSION = 8
 
 
@@ -207,6 +207,7 @@ class Offer(Table, StateRows):
     message_nets = Column("string")
 
     # Local fields
+    lock_blocks = Column("integer")
     auto_accept_bids = Column("bool")
     was_sent = Column("bool")  # Sent by node
     withdraw_to_addr = Column(
@@ -262,6 +263,10 @@ class Bid(Table, StateRows):
     chain_a_height_start = Column("integer")  # Height of script chain before the swap
     # Height of scriptless chain before the swap
     chain_b_height_start = Column("integer")
+
+    buyer_contract_pubkey = Column("blob")
+    seller_contract_pubkey = Column("blob")
+    nav_redeem_addr = Column("string")
 
     reject_code = Column("integer")
 
@@ -319,6 +324,10 @@ class SwapTx(Table, StateRows):
     block_hash = Column("blob")
     block_height = Column("integer")
     block_time = Column("integer")
+
+    tx_data_funded = Column("blob")
+    outid = Column("blob")
+    not_published = Column("integer")
 
     primary_key = PrimaryKeyConstraint("bid_id", "tx_type")
 

@@ -89,8 +89,8 @@ DASH_VERSION_TAG = os.getenv("DASH_VERSION_TAG", "")
 FIRO_VERSION = os.getenv("FIRO_VERSION", "0.14.16.1")
 FIRO_VERSION_TAG = os.getenv("FIRO_VERSION_TAG", "")
 
-NAV_VERSION = os.getenv("NAV_VERSION", "7.0.3")
-NAV_VERSION_TAG = os.getenv("NAV_VERSION_TAG", "")
+NAVIO_VERSION = os.getenv("NAVIO_VERSION", "0.1.0-rc19")  # TODO NAV update to the latest
+NAVIO_VERSION_TAG = os.getenv("NAVIO_VERSION_TAG", "")
 
 BITCOINCASH_VERSION = os.getenv("BITCOINCASH_VERSION", "29.0.0")
 BITCOINCASH_VERSION_TAG = os.getenv("BITCOINCASH_VERSION_TAG", "")
@@ -110,13 +110,12 @@ known_coins = {
     "pivx": (PIVX_VERSION, PIVX_VERSION_TAG, ("fuzzbawls",)),
     "dash": (DASH_VERSION, DASH_VERSION_TAG, ("pasta",)),
     "firo": (FIRO_VERSION, FIRO_VERSION_TAG, ("reuben",)),
-    "navcoin": (NAV_VERSION, NAV_VERSION_TAG, ("nav_builder",)),
+    "navio": (NAVIO_VERSION, NAVIO_VERSION_TAG, ("navio_builder",)),  # TODO NAV update to the latest
     "bitcoincash": (BITCOINCASH_VERSION, BITCOINCASH_VERSION_TAG, ("Calin_Culianu",)),
     "dogecoin": (DOGECOIN_VERSION, DOGECOIN_VERSION_TAG, ("tecnovert",)),
 }
 
 disabled_coins = [
-    "navcoin",
 ]
 
 # Network clients
@@ -150,7 +149,7 @@ expected_key_ids = {
         "02B8E7D002167C8B451AF05FE2F3D7916E722D38",
     ),
     "reuben": ("0186454D63E83D85EF91DE4E1290A1D0FA7EE109",),
-    "nav_builder": ("1BF9B51BAED51BA0B3A174EE2782262BF6E7FADB",),
+    "navio_builder": ("4DC1A6D4CB76395724FB97DBA05B6DF4513EA050",),  # TODO NAV update to the latest
     "nicolasdorier": (
         "AB4CFA9895ACA0DBE27F6B346618763EF09186FE",
         "015B4C837B245509E4AC8995223FDA69DEBEA82D",
@@ -284,7 +283,7 @@ FIRO_RPC_USER = os.getenv("FIRO_RPC_USER", "")
 FIRO_RPC_PWD = os.getenv("FIRO_RPC_PWD", "")
 
 NAV_RPC_HOST = os.getenv("NAV_RPC_HOST", "127.0.0.1")
-NAV_RPC_PORT = int(os.getenv("NAV_RPC_PORT", 44444))
+NAV_RPC_PORT = int(os.getenv("NAV_RPC_PORT", 44445))  # TODO NAV revert this upon making pr (testnet7 port)
 NAV_ONION_PORT = int(os.getenv("NAV_ONION_PORT", 8334))  # TODO?
 NAV_RPC_USER = os.getenv("NAV_RPC_USER", "")
 NAV_RPC_PWD = os.getenv("NAV_RPC_PWD", "")
@@ -905,7 +904,7 @@ def prepareCore(coin, version_data, settings, data_dir, extra_opts={}):
             downloadFile(assert_sig_url, assert_sig_path)
     else:
         major_version = int(version.split(".")[0])
-        use_guix: bool = coin in ("dash",) or major_version >= 22
+        use_guix: bool = coin in ("dash", "navio",) or major_version >= 22
         arch_name = BIN_ARCH
         if os_name == "osx" and use_guix:
             arch_name = "x86_64-apple-darwin"
@@ -1036,16 +1035,20 @@ def prepareCore(coin, version_data, settings, data_dir, extra_opts={}):
             assert_url = "https://github.com/firoorg/firo/releases/download/v{}/SHA256SUMS".format(
                 version + version_tag
             )
-        elif coin == "navcoin":
-            release_filename = "{}-{}-{}.{}".format(coin, version, BIN_ARCH, FILE_EXT)
-            release_url = "https://github.com/navcoin/navcoin-core/releases/download/{}/{}".format(
-                version + version_tag, release_filename
-            )
-            assert_filename = "SHA256SUM_7.0.3.asc"
-            assert_sig_filename = "SHA256SUM_7.0.3.asc.sig"
-            assert_url = "https://github.com/navcoin/navcoin-core/releases/download/{}/{}".format(
-                version + version_tag, assert_filename
-            )
+        elif coin == "navio":
+            bin_arch = BIN_ARCH
+            if "BIN_ARCH" not in os.environ and USE_PLATFORM == "Darwin":
+                machine = platform.machine()
+                if machine == "arm64":
+                    bin_arch = "arm64-apple-darwin"
+                elif machine == "x86_64":
+                    bin_arch = "x86_64-apple-darwin"
+                else:
+                    raise ValueError(f"Unsupported macOS arch for {coin}: {machine}")
+            release_filename = f"{coin}-{version}-{bin_arch}.{FILE_EXT}"
+            base_url = "https://releases.nav.io"
+            release_url = f"{base_url}/{release_filename}"
+            assert_url = f"{base_url}/SHA256SUMS-{version}"
         else:
             raise ValueError("Unknown coin")
 
@@ -1065,10 +1068,9 @@ def prepareCore(coin, version_data, settings, data_dir, extra_opts={}):
             "bitcoincash",
         ):
             assert_sig_url = assert_url + (".asc" if use_guix else ".sig")
-            if coin not in ("nav",):
-                assert_sig_filename = "{}-{}-{}-build-{}.assert.sig".format(
-                    coin, os_name, version, signing_key_name
-                )
+            assert_sig_filename = "{}-{}-{}-build-{}.assert.sig".format(
+                coin, os_name, version, signing_key_name
+            )
             assert_sig_path = os.path.join(bin_dir, assert_sig_filename)
             if not os.path.exists(assert_sig_path):
                 downloadFile(assert_sig_url, assert_sig_path)
@@ -1101,9 +1103,7 @@ def prepareCore(coin, version_data, settings, data_dir, extra_opts={}):
                     for key in rv.fingerprints:
                         gpg.trust_keys(rv.fingerprints[0], "TRUST_FULLY")
 
-    if coin in ("navcoin",):
-        pubkey_filename = "{}_builder.pgp".format(coin)
-    elif coin in ("decred",):
+    if coin in ("decred",):
         pubkey_filename = "{}_release.pgp".format(coin)
     elif coin in ("dogecoin",):
         pubkey_filename = "particl_{}.pgp".format(signing_key_name)
@@ -1128,6 +1128,8 @@ def prepareCore(coin, version_data, settings, data_dir, extra_opts={}):
         pubkeyurls.append(
             "https://gitlab.com/bitcoin-cash-node/bitcoin-cash-node/-/raw/master/contrib/gitian-signing/pubkeys.txt"
         )
+    if coin == "navio":
+        pubkeyurls.append("https://releases.nav.io/navio-build-signing-public.asc")  # TODO NAV create pgp key file for navio
 
     coin_id = getCoinIdFromName(coin)
     ticker: str = chainparams[coin_id]["ticker"]
@@ -1202,6 +1204,7 @@ def prepareDataDir(coin, settings, chain, particl_mnemonic, extra_opts={}):
     assert len(wallet_name) > 0
     data_dir = core_settings["datadir"]
     tor_control_password = extra_opts.get("tor_control_password", None)
+    coin_chain = core_settings.get("chain_override", chain)  # TODO NAV revert this upon making pr
 
     if not os.path.exists(data_dir):
         os.makedirs(data_dir)
@@ -1352,19 +1355,16 @@ def prepareDataDir(coin, settings, chain, particl_mnemonic, extra_opts={}):
     if os.path.exists(core_conf_path):
         exitWithError(f"{core_conf_path} exists")
     with open(core_conf_path, "w") as fp:
-        if chain != "mainnet":
-            if coin in ("navcoin",):
-                chainname = "devnet" if chain == "regtest" else chain
-                fp.write(chainname + "=1\n")
-            else:
-                fp.write(chain + "=1\n")
-            if coin not in ("firo", "navcoin"):
-                if chain == "testnet":
+        # TODO NAV revert: revert coin_chain to chain after removing chain_override
+        if coin_chain != "mainnet":
+            fp.write(coin_chain + "=1\n")
+            if coin not in ("firo",):
+                if coin_chain == "testnet":
                     fp.write("[test]\n\n")
-                elif chain == "regtest":
+                elif coin_chain == "regtest":
                     fp.write("[regtest]\n\n")
                 else:
-                    logger.warning(f"Unknown chain {chain}")
+                    logger.warning(f"Unknown chain {coin_chain}")
 
         if COINS_RPCBIND_IP != "127.0.0.1":
             fp.write("rpcallowip=127.0.0.1\n")
@@ -1388,7 +1388,8 @@ def prepareDataDir(coin, settings, chain, particl_mnemonic, extra_opts={}):
         if coin == "particl":
             fp.write("deprecatedrpc=create_bdb\n")
             fp.write("debugexclude=libevent\n")
-            if chain == "mainnet":
+            # TODO NAV revert: revert coin_chain to chain after removing chain_override
+            if coin_chain == "mainnet":
                 fp.write("rpcdoccheck=0\n")
             fp.write(
                 "zmqpubsmsg=tcp://{}:{}\n".format(COINS_RPCBIND_IP, settings["zmqport"])
@@ -1495,10 +1496,14 @@ def prepareDataDir(coin, settings, chain, particl_mnemonic, extra_opts={}):
                         FIRO_RPC_USER, salt, password_to_hmac(salt, FIRO_RPC_PWD)
                     )
                 )
-        elif coin == "navcoin":
-            fp.write("prune=4000\n")
-            fp.write("fallbackfee=0.0002\n")
-            if NAV_RPC_USER != "":
+        elif coin == "navio":
+            fp.write("prune=4000\n")  # TODO NAV delete this
+            fp.write("fallbackfee=0.0002\n")  # TODO NAV delete this
+            fp.write("server=1\n")  # TODO NAV delete this
+            fp.write("listen=1\n")  # TODO NAV delete this
+            if chain == "testnet":
+                fp.write("addnode=testnet.nav.io\n")  # TODO NAV delete this
+            if NAV_RPC_USER != "" and NAV_RPC_PWD != "":
                 fp.write(
                     "rpcauth={}:{}${}\n".format(
                         NAV_RPC_USER, salt, password_to_hmac(salt, NAV_RPC_PWD)
@@ -1877,6 +1882,7 @@ def initialise_wallets(
             Coins.DCR,
             Coins.DASH,
             Coins.NMC,
+            Coins.NAV,
         )
         # Always start Particl, it must be running to initialise a wallet in addcoin mode
         # Particl must be loaded first as subsequent coins are initialised from the Particl mnemonic
@@ -2045,6 +2051,24 @@ def initialise_wallets(
                                     use_descriptors,
                                 ],
                             )
+                        swap_client.ci(c).unlockWallet(
+                            WALLET_ENCRYPTION_PWD, check_seed=False
+                        )
+                    elif c in (Coins.NAV,):
+                        params = [
+                            wallet_name,
+                            False,  # disable private keys
+                            True,   # create blank wallet
+                            WALLET_ENCRYPTION_PWD,
+                            False,  # avoid reuse
+                            use_descriptors,
+                            True,   # load_on_startup
+                            False,  # external_signer
+                            True,   # blsct
+                            False,  # storage_output
+                        ]
+                        swap_client.callcoinrpc(c, "createwallet", params)
+                        logger.info(f"Created NAV wallet w/ {params=}")
                         swap_client.ci(c).unlockWallet(
                             WALLET_ENCRYPTION_PWD, check_seed=False
                         )
@@ -2674,6 +2698,7 @@ def main():
             "conf_target": 2,
             "core_version_no": getKnownVersion("particl"),
             "core_version_group": 23,
+            "chain_override": "mainnet",  # TODO NAV revert this upon making pr (chain_override support needs to be dropped in pr, but necessary for development now)
         },
         "bitcoin": {
             "connection_type": "rpc",
@@ -2699,7 +2724,7 @@ def main():
             "datadir": os.getenv("LTC_DATA_DIR", os.path.join(data_dir, "litecoin")),
             "bindir": os.path.join(bin_dir, "litecoin"),
             "use_segwit": True,
-            "blocks_confirmed": 2,
+            "blocks_confirmed": 1,  # TODO NAV revert to 2
             "conf_target": 2,
             "core_version_no": getKnownVersion("litecoin"),
             "core_version_group": 20,
@@ -2835,22 +2860,21 @@ def main():
             "core_version_group": 14,
             "min_relay_fee": 0.00001,
         },
-        "navcoin": {
+        "navio": {
             "connection_type": "rpc",
             "manage_daemon": shouldManageDaemon("NAV"),
             "rpchost": NAV_RPC_HOST,
             "rpcport": NAV_RPC_PORT + port_offset,
             "onionport": NAV_ONION_PORT + port_offset,
-            "datadir": os.getenv("NAV_DATA_DIR", os.path.join(data_dir, "navcoin")),
-            "bindir": os.path.join(bin_dir, "navcoin"),
-            "use_segwit": True,
+            "datadir": os.getenv("NAV_DATA_DIR", os.path.join(data_dir, "navio")),
+            "bindir": os.path.join(bin_dir, "navio"),
+            "use_segwit": False,
             "use_csv": True,
             "blocks_confirmed": 1,
             "conf_target": 2,
-            "core_version_no": getKnownVersion("navcoin"),
+            "core_version_no": getKnownVersion("navio"),
             "core_version_group": 18,
             "chain_lookups": "local",
-            "startup_tries": 40,
         },
         "bitcoincash": {
             "connection_type": "rpc",
@@ -2980,8 +3004,8 @@ def main():
         chainclients["firo"]["rpcuser"] = FIRO_RPC_USER
         chainclients["firo"]["rpcpassword"] = FIRO_RPC_PWD
     if NAV_RPC_USER != "":
-        chainclients["nav"]["rpcuser"] = NAV_RPC_USER
-        chainclients["nav"]["rpcpassword"] = NAV_RPC_PWD
+        chainclients["navio"]["rpcuser"] = NAV_RPC_USER
+        chainclients["navio"]["rpcpassword"] = NAV_RPC_PWD
 
     chainclients["monero"]["walletsdir"] = os.getenv(
         "XMR_WALLETS_DIR", chainclients["monero"]["datadir"]

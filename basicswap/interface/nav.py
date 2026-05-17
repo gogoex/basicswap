@@ -5,309 +5,123 @@
 # Distributed under the MIT software license, see the accompanying
 # file LICENSE or http://www.opensource.org/licenses/mit-license.php.
 
-import random
-import hashlib
-
-from io import BytesIO
-from coincurve.keys import (
-    PublicKey,
-    PrivateKey,
-)
 from basicswap.interface.btc import (
     BTCInterface,
-    extractScriptLockRefundScriptValues,
-    findOutput,
-    find_vout_for_address_from_txobj,
 )
-from basicswap.rpc import make_rpc_func
 from basicswap.chainparams import Coins
-from basicswap.contrib.mnemonic import Mnemonic
-from basicswap.interface.contrib.nav_test_framework.mininode import (
-    CTxIn,
-    CTxOut,
-    CBlock,
-    COutPoint,
-    CTransaction,
-    CTxInWitness,
-    FromHex,
-)
-from basicswap.util.crypto import hash160
-from basicswap.util.address import (
-    decodeWif,
-    pubkeyToAddress,
-    encodeAddress,
-)
-from basicswap.util import (
-    b2i,
-    i2b,
-    ensure,
-)
-from basicswap.basicswap_util import (
-    getVoutByScriptPubKey,
-)
+from typing import Optional, Any, TypedDict
+from basicswap.basicswap_util import TxLockTypes
+from basicswap.util import SerialiseNum, TemporaryError
+from basicswap.util.crypto import sha256
+from coincurve.keys import PrivateKey
+import basicswap.protocols.atomic_swap_1 as atomic_swap_1
 
-from basicswap.interface.contrib.nav_test_framework.script import (
-    CScript,
-    OP_0,
-    OP_EQUAL,
-    OP_DUP,
-    OP_HASH160,
-    OP_EQUALVERIFY,
-    OP_CHECKSIG,
-    SIGHASH_ALL,
-    SegwitVersion1SignatureHash,
-)
+class PrevOutInfo(TypedDict):
+    outid: str
+    amount: int
+    gamma: str
+    spending_key: str
 
+class PtxInfoOfferer(TypedDict):
+    script: bytearray
+    tx_data_funded: bytes
 
 class NAVInterface(BTCInterface):
     @staticmethod
-    def coin_type():
+    def coin_type() -> Coins: # type: ignore[override]
         return Coins.NAV
 
-    @staticmethod
-    def txVersion() -> int:
-        return 3
+    def __init__(self, coin_settings, network, swap_client=None):
+        super(NAVInterface, self).__init__(coin_settings, network, swap_client)
+        self._ptx_info_offerer: dict = {}
 
-    @staticmethod
-    def txoType():
-        return CTxOut
-
-    def __init__(self, coin_settings, network, swap_client=None, **kwargs):
-        super().__init__(
-            coin_settings=coin_settings,
-            network=network,
-            swap_client=swap_client,
-            **kwargs,
-        )
-        # No multiwallet support
-        self.rpc_wallet = make_rpc_func(
-            self._rpcport, self._rpcauth, host=self._rpc_host
-        )
-        self.rpc_wallet_watch = self.rpc_wallet
-
-        if "wallet_name" in coin_settings:
-            raise ValueError(f"Invalid setting for {self.coin_name()}: wallet_name")
-
-    def use_p2shp2wsh(self) -> bool:
-        # p2sh-p2wsh
-        return True
-
-    def initialiseWallet(self, key, restore_time: int = -1):
-        # Load with -importmnemonic= parameter
-        pass
-
-    def checkWallets(self) -> int:
-        return 1
-
-    def getWalletSeedID(self):
-        return self.rpc("getwalletinfo")["hdmasterkeyid"]
-
-    def withdrawCoin(self, value, addr_to: str, subfee: bool):
-        strdzeel = ""
-        params = [addr_to, value, "", "", strdzeel, subfee]
-        return self.rpc("sendtoaddress", params)
-
-    def getSpendableBalance(self) -> int:
-        return self.make_int(self.rpc("getwalletinfo")["balance"])
-
-    def signTxWithWallet(self, tx: bytes) -> bytes:
-        rv = self.rpc("signrawtransaction", [tx.hex()])
-
-        return bytes.fromhex(rv["hex"])
-
-    def checkExpectedSeed(self, key_hash: str):
+    def checkExpectedSeed(self, expect_seedid: str) -> bool:
+        RPC_WALLET_BLANK = -37
         try:
-            rv = self.rpc("dumpmnemonic")
-            entropy = Mnemonic("english").to_entropy(rv.split(" "))
-
-            entropy_hash = self.getAddressHashFromKey(entropy)[::-1].hex()
-            self._have_checked_seed = True
-            return entropy_hash == key_hash
+            actual_seedid = self.getWalletSeedID()
         except Exception as e:
-            self._log.warning("checkExpectedSeed failed: {}".format(str(e)))
-        return False
+            if str(RPC_WALLET_BLANK) in str(e):
+                return False
+            raise
+        return expect_seedid == actual_seedid
 
-    def getScriptForP2PKH(self, pkh: bytes) -> bytearray:
-        # Return P2PKH
-        return CScript([OP_DUP, OP_HASH160, pkh, OP_EQUALVERIFY, OP_CHECKSIG])
+    def clearPtxData(self, bid_id: bytes) -> None:
+        self._ptx_info_offerer.pop(bid_id, None)
 
-    def getScriptForPubkeyHash(self, pkh: bytes) -> bytearray:
-        # Return P2SH-p2wpkh
-
-        script = CScript([OP_0, pkh])
-        script_hash = hash160(script)
-        assert len(script_hash) == 20
-
-        return CScript([OP_HASH160, script_hash, OP_EQUAL])
-
-    def getInputScriptForPubkeyHash(self, pkh: bytes) -> bytearray:
-        script = CScript([OP_0, pkh])
-        return bytes((len(script),)) + script
-
-    def encodeSegwitAddress(self, pkh: bytes) -> str:
-        # P2SH-p2wpkh
-        script = CScript([OP_0, pkh])
-        script_hash = hash160(script)
-        assert len(script_hash) == 20
-        return encodeAddress(
-            bytes((self.chainparams_network()["script_address"],)) + script_hash
+    def createFakeNonNavHTLCScript(self, secret_hash: bytearray, locktime: int) -> bytearray:
+        """
+        Create a non-NAV HTLC script with zeroed-out fields,
+        excluding the secret hash and locktime.
+        """
+        padded_secret_hash = secret_hash.rjust(32, b'\x00')
+        locktime_bytes = locktime.to_bytes(max(1, (locktime.bit_length() + 7) // 8), byteorder='little')
+        fake_script = (
+            b'\x00' * 7 +
+            padded_secret_hash +
+            b'\x00' * 25 +
+            bytes([len(locktime_bytes)]) +
+            locktime_bytes
         )
+        return bytearray(fake_script)
 
-    def encodeSegwitAddressScript(self, script: bytes) -> str:
-        if (
-            len(script) == 23
-            and script[0] == OP_HASH160
-            and script[1] == 20
-            and script[22] == OP_EQUAL
-        ):
-            script_hash = script[2:22]
-            return encodeAddress(
-                bytes((self.chainparams_network()["script_address"],)) + script_hash
-            )
-        raise ValueError("Unknown Script")
-
-    def loadTx(self, tx_bytes: bytes) -> CTransaction:
-        # Load tx from bytes to internal representation
-        tx = CTransaction()
-        tx.deserialize(BytesIO(tx_bytes))
-        return tx
-
-    def signTx(
+    def createInitiateTxn(
         self,
-        key_bytes: bytes,
-        tx_bytes: bytes,
-        input_n: int,
-        prevout_script,
-        prevout_value: int,
-    ):
-        tx = self.loadTx(tx_bytes)
-        sig_hash = SegwitVersion1SignatureHash(
-            prevout_script, tx, input_n, SIGHASH_ALL, prevout_value
-        )
-        eck = PrivateKey(key_bytes)
-        return eck.sign(sig_hash, hasher=None) + bytes((SIGHASH_ALL,))
+        address_a: str,
+        address_b: str,
+        hash: bytes,
+        locktime: int,
+        blinding_key: int,
+        amount: int,
+    ) -> tuple[str, int]:
+        param: dict[str, Any] = {
+            "amount": amount,
+            "address_a": address_a,
+            "address_b": address_b,
+            "blinding_key": f"{blinding_key:064x}",
+            "hash": hash.hex(),
+            "locktime": locktime,
+            "type": "atomic_swap",
+        }
+        params = [param]
+        txn = self.rpc("createblsctrawtransaction", [[], params])
 
-    def setTxSignature(self, tx_bytes: bytes, stack) -> bytes:
-        tx = self.loadTx(tx_bytes)
-        tx.wit.vtxinwit.clear()
-        tx.wit.vtxinwit.append(CTxInWitness())
-        tx.wit.vtxinwit[0].scriptWitness.stack = stack
-        return tx.serialize_with_witness()
+        txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn])
+        txjs = self.rpc_wallet("decodeblsctrawtransaction", [txn_funded])
 
-    def getProofOfFunds(self, amount_for, extra_commit_bytes):
-        # TODO: Lock unspent and use same output/s to fund bid
-
-        unspents_by_addr = dict()
-        unspents = self.rpc("listunspent")
-        for u in unspents:
-            if u["spendable"] is not True:
-                continue
-            if u["address"] not in unspents_by_addr:
-                unspents_by_addr[u["address"]] = {"total": 0, "utxos": []}
-            utxo_amount: int = self.make_int(u["amount"], r=1)
-            unspents_by_addr[u["address"]]["total"] += utxo_amount
-            unspents_by_addr[u["address"]]["utxos"].append(
-                (utxo_amount, u["txid"], u["vout"])
-            )
-
-        max_utxos: int = 4
-
-        viable_addrs = []
-        for addr, data in unspents_by_addr.items():
-            if data["total"] >= amount_for:
-                # Sort from largest to smallest amount
-                sorted_utxos = sorted(data["utxos"], key=lambda x: x[0])
-
-                # Max outputs required to reach amount_for
-                utxos_req: int = 0
-                sum_value: int = 0
-                for utxo in sorted_utxos:
-                    sum_value += utxo[0]
-                    utxos_req += 1
-                    if sum_value >= amount_for:
-                        break
-
-                if utxos_req <= max_utxos:
-                    viable_addrs.append(addr)
-                    continue
-
-        ensure(
-            len(viable_addrs) > 0, "Could not find address with enough funds for proof"
-        )
-
-        sign_for_addr: str = random.choice(viable_addrs)
-        self._log.debug("sign_for_addr %s", sign_for_addr)
-
-        prove_utxos = []
-        sorted_utxos = sorted(
-            unspents_by_addr[sign_for_addr]["utxos"], key=lambda x: x[0]
-        )
-
-        hasher = hashlib.sha256()
-
-        sum_value: int = 0
-        for utxo in sorted_utxos:
-            sum_value += utxo[0]
-            outpoint = (bytes.fromhex(utxo[1]), utxo[2])
-            prove_utxos.append(outpoint)
-            hasher.update(outpoint[0])
-            hasher.update(outpoint[1].to_bytes(2, "big"))
-            if sum_value >= amount_for:
+        vout_index = None
+        for index, output in enumerate(txjs["outputs"]):
+            if self.isHTLCScript(output["scriptPubKey"]):
+                vout_index = index
                 break
-        utxos_hash = hasher.digest()
+        if vout_index is None:
+            raise ValueError(f"Failed to find vout with HTLC script")
+        self._log.info(f"vout index is {vout_index}")
 
-        if (
-            self.using_segwit()
-        ):  # TODO: Use isSegwitAddress when scantxoutset can use combo
-            # 'Address does not refer to key' for non p2pkh
-            addr_info = self.rpc(
-                "validateaddress",
-                [
-                    addr,
-                ],
-            )
-            if "isscript" in addr_info and addr_info["isscript"] and "hex" in addr_info:
-                pkh = bytes.fromhex(addr_info["hex"])[2:]
-                sign_for_addr = self.pkh_to_address(pkh)
-                self._log.debug("sign_for_addr converted %s", sign_for_addr)
+        return txn_funded, vout_index
 
-        signature = self.rpc(
-            "signmessage",
-            [
-                sign_for_addr,
-                sign_for_addr
-                + "_swap_proof_"
-                + utxos_hash.hex()
-                + extra_commit_bytes.hex(),
-            ],
-        )
+    def _createRawFundedTransaction(
+        self,
+        addr_to: str,
+        amount: int, # amount in navoshis
+        script: Optional[bytearray] = None,
+        sub_fee: bool = False,
+        lock_unspents: bool = True,
+    ) -> str:
+        del sub_fee
+        del lock_unspents
 
-        return (sign_for_addr, signature, prove_utxos)
+        param: dict[str, Any] = {
+            "address": addr_to,
+            "amount": amount,
+        }
+        if script is not None:
+            param["script"] = bytes(script).hex()
+        params = [param]
 
-    def verifyProofOfFunds(self, address, signature, utxos, extra_commit_bytes):
-        hasher = hashlib.sha256()
-        sum_value: int = 0
-        for outpoint in utxos:
-            hasher.update(outpoint[0])
-            hasher.update(outpoint[1].to_bytes(2, "big"))
-        utxos_hash = hasher.digest()
+        txn = self.rpc("createblsctrawtransaction", [[], params])
 
-        passed = self.verifyMessage(
-            address,
-            address + "_swap_proof_" + utxos_hash.hex() + extra_commit_bytes.hex(),
-            signature,
-        )
-        ensure(passed is True, "Proof of funds signature invalid")
-
-        if self.using_segwit():
-            address = self.encodeSegwitAddress(self.decodeAddress(address)[1:])
-
-        sum_value: int = 0
-        for outpoint in utxos:
-            txout = self.rpc("gettxout", [outpoint[0].hex(), outpoint[1]])
-            sum_value += self.make_int(txout["value"])
-
-        return sum_value
+        txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn])
+        return txn_funded
 
     def createRawFundedTransaction(
         self,
@@ -315,702 +129,480 @@ class NAVInterface(BTCInterface):
         amount: int,
         sub_fee: bool = False,
         lock_unspents: bool = True,
-        feerate: int = None,
     ) -> str:
-        txn = self.rpc(
-            "createrawtransaction", [[], {addr_to: self.format_amount(amount)}]
-        )
-        if feerate:
-            fee_rate = self.format_amount(feerate)
-            fee_src = "specified"
-        else:
-            fee_rate, fee_src = self.get_fee_rate(self._conf_target)
-        self._log.debug(
-            f"Fee rate: {fee_rate}, source: {fee_src}, block target: {self._conf_target}"
-        )
-        if sub_fee:
-            raise ValueError(
-                "Navcoin fundrawtransaction is missing the subtractFeeFromOutputs parameter"
-            )
-            # options['subtractFeeFromOutputs'] = [0,]
-
-        fee_rate = self.make_int(fee_rate, r=1)
-        return self.fundTx(txn, fee_rate, lock_unspents).hex()
-
-    def isAddressMine(self, address: str, or_watch_only: bool = False) -> bool:
-        addr_info = self.rpc("validateaddress", [address])
-        if not or_watch_only:
-            return addr_info["ismine"]
-        return addr_info["ismine"] or addr_info["iswatchonly"]
+        return self._createRawFundedTransaction(
+            addr_to,
+            amount,
+            None,
+            sub_fee,
+            lock_unspents)
 
     def createRawSignedTransaction(self, addr_to, amount) -> str:
-        txn_funded = self.createRawFundedTransaction(addr_to, amount)
-        return self.rpc("signrawtransaction", [txn_funded])["hex"]
-
-    def getBlockchainInfo(self):
-        rv = self.rpc("getblockchaininfo")
-        synced = round(rv["verificationprogress"], 3)
-        if synced >= 0.997:
-            rv["verificationprogress"] = 1.0
-        return rv
-
-    def encodeScriptDest(self, script_dest: bytes) -> str:
-        script_hash = script_dest[2:-1]  # Extract hash from script
-        return self.sh_to_address(script_hash)
-
-    def encode_p2wsh(self, script: bytes) -> str:
-        return pubkeyToAddress(self.chainparams_network()["script_address"], script)
-
-    def find_prevout_info(self, txn_hex: str, txn_script: bytes):
-        txjs = self.rpc("decoderawtransaction", [txn_hex])
-        n = getVoutByScriptPubKey(txjs, self.getScriptDest(txn_script).hex())
-
-        return {
-            "txid": txjs["txid"],
-            "vout": n,
-            "scriptPubKey": txjs["vout"][n]["scriptPubKey"]["hex"],
-            "redeemScript": txn_script.hex(),
-            "amount": txjs["vout"][n]["value"],
-        }
-
-    def getNewAddress(self, use_segwit: bool, label: str = "swap_receive") -> str:
-        address: str = self.rpc(
-            "getnewaddress",
-            [
-                label,
-            ],
-        )
-        if use_segwit:
-            return self.rpc(
-                "addwitnessaddress",
-                [
-                    address,
-                ],
-            )
-        return address
+        txn_funded = self._createRawFundedTransaction(addr_to, amount)
+        return self.rpc_wallet("signblsctrawtransaction", [txn_funded])
 
     def createRedeemTxn(
-        self, prevout, output_addr: str, output_value: int, txn_script: bytes
+        self,
+        prevout: PrevOutInfo, # amount is in Navoshis
+        output_addr: str,
+        output_value: int, # in Navoshis
+        txn_script: bytes | None = None,
     ) -> str:
-        tx = CTransaction()
-        tx.nVersion = self.txVersion()
-        prev_txid = b2i(bytes.fromhex(prevout["txid"]))
+        in_params: dict[str, Any] = {
+            "outid": prevout["outid"],
+            "value": int(prevout["amount"]),
+            "gamma": prevout["gamma"],
+            "spending_key": prevout["spending_key"],
+            "scriptSig": txn_script.hex(),
+        }
+        out_params: dict[str, Any] = {
+            "amount": int(output_value),
+            "address": output_addr,
+        }
+        params = [[in_params], [out_params]]
+        txn = self.rpc("createblsctrawtransaction", params)
 
-        tx.vin.append(
-            CTxIn(
-                COutPoint(prev_txid, prevout["vout"]),
-                scriptSig=self.getScriptScriptSig(txn_script),
-            )
-        )
-        pkh = self.decodeAddress(output_addr)
-        script = self.getScriptForPubkeyHash(pkh)
-        tx.vout.append(self.txoType()(output_value, script))
-        tx.rehash()
-        return tx.serialize().hex()
+        fee = int(prevout["amount"]) - output_value
+        try:
+            txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn, None, False, fee])
+        except Exception as e:
+            if "Insufficient funds" in str(e):
+                raise TemporaryError(str(e))
+            raise
+
+        return txn_funded
 
     def createRefundTxn(
         self,
-        prevout,
+        prevout: PrevOutInfo, # amount is in Navoshis
         output_addr: str,
-        output_value: int,
+        output_value: int, # in NAV
         locktime: int,
         sequence: int,
-        txn_script: bytes,
+        txn_script: bytes | None = None,
     ) -> str:
-        tx = CTransaction()
-        tx.nVersion = self.txVersion()
-        tx.nLockTime = locktime
-        prev_txid = b2i(bytes.fromhex(prevout["txid"]))
-        tx.vin.append(
-            CTxIn(
-                COutPoint(prev_txid, prevout["vout"]),
-                nSequence=sequence,
-                scriptSig=self.getScriptScriptSig(txn_script),
-            )
-        )
-        pkh = self.decodeAddress(output_addr)
-        script = self.getScriptForPubkeyHash(pkh)
-        tx.vout.append(self.txoType()(output_value, script))
-        tx.rehash()
-        return tx.serialize().hex()
+        del txn_script
+        # For ABS lock types, locktime holds the CLTV value; for SEQUENCE types, sequence does.
+        nav_locktime = locktime if locktime != 0 else sequence
+        navoshi_output_value = self.make_int(output_value, r=1)
+        del output_value
 
-    def getTxSignature(self, tx_hex: str, prevout_data, key_wif: str) -> str:
-        key = decodeWif(key_wif)
-        redeem_script = bytes.fromhex(prevout_data["redeemScript"])
-        sig = self.signTx(
-            key,
-            bytes.fromhex(tx_hex),
-            0,
-            redeem_script,
-            self.make_int(prevout_data["amount"]),
-        )
+        in_params: dict[str, Any] = {
+            "outid": prevout["outid"],
+            "value": int(prevout["amount"]),
+            "gamma": prevout["gamma"],
+            "spending_key": prevout["spending_key"],
+            "scriptSig": "00", # select else path
+            "sequence": nav_locktime, # CLTV requires nSequence == script locktime
+        }
+        out_params: dict[str, Any] = {
+            "amount": navoshi_output_value,
+            "address": output_addr,
+        }
+        params = [[in_params], [out_params]]
+        txn = self.rpc("createblsctrawtransaction", params)
 
-        return sig.hex()
+        fee = prevout["amount"] - navoshi_output_value
+        txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn, None, False, fee])
 
-    def verifyTxSig(
-        self,
-        tx_bytes: bytes,
-        sig: bytes,
-        K: bytes,
-        input_n: int,
-        prevout_script: bytes,
-        prevout_value: int,
-    ) -> bool:
-        tx = self.loadTx(tx_bytes)
-        sig_hash = SegwitVersion1SignatureHash(
-            prevout_script, tx, input_n, SIGHASH_ALL, prevout_value
-        )
+        return txn_funded
 
-        pubkey = PublicKey(K)
-        return pubkey.verify(sig[:-1], sig_hash, hasher=None)  # Pop the hashtype byte
+    def deriveBlindingKey(self, privkey: bytes, pubkey: bytes) -> int:
+        """Derive a blinding key via ECDH: SHA256(ECDH(privkey, pubkey))."""
 
-    def verifyRawTransaction(self, tx_hex: str, prevouts):
-        # Only checks signature
-        # verifyrawtransaction
-        self._log.warning("NAV verifyRawTransaction only checks signature")
-        inputs_valid: bool = False
-        validscripts: int = 0
+        ecdh_secret = PrivateKey(privkey).ecdh(pubkey)
+        blinding_key_bytes = sha256(ecdh_secret)
+        return int.from_bytes(blinding_key_bytes, "big")
 
-        tx_bytes = bytes.fromhex(tx_hex)
-        tx = self.loadTx(bytes.fromhex(tx_hex))
+    def deriveSpendingKey(self, blinding_key_hex: str, address: str) -> str:
+        """Derive the private spending key for a BLSCT HTLC output.
+        Uses rpc_wallet because the address must be owned by this wallet."""
+        return self.rpc_wallet("deriveblsctspendingkey", [blinding_key_hex, address])
 
-        signature = tx.wit.vtxinwit[0].scriptWitness.stack[0]
-        pubkey = tx.wit.vtxinwit[0].scriptWitness.stack[1]
+    def describeTx(self, tx_hex: str):
+        # tx_hex is expected to be sigined
+        # for txs before signing, use decodeblsctrawtransaction
+        return self.rpc("decoderawtransaction", [tx_hex])
 
-        input_n: int = 0
-        prevout_data = prevouts[input_n]
-        redeem_script = bytes.fromhex(prevout_data["redeemScript"])
-        prevout_value = self.make_int(prevout_data["amount"])
 
-        if self.verifyTxSig(
-            tx_bytes, signature, pubkey, input_n, redeem_script, prevout_value
-        ):
-            validscripts += 1
+    def extractHTLCLockVal(self, script: bytes, is_nav: bool) -> int:
+        if is_nav:
+            push_size = script[90]
+            locktime_bytes = script[91:91 + push_size]
+        else:
+            push_size = script[64]
+            locktime_bytes = script[65:65 + push_size]
+        return int.from_bytes(locktime_bytes, byteorder='little')
 
-        # TODO: validate inputs
-        inputs_valid = True
-
+    # Workaround: naviod crashes with getblock verbosity=2 (MoneyRange assertion). Remove once naviod fixes.
+    def getBlockWithTxns(self, block_hash: str):
+        # naviod crashes with getblock with verbosity 2 (MoneyRange bug),
+        # so use getblockheader and return an empty tx list b/c NAV will not use txs there
+        header = self.rpc("getblockheader", [block_hash])
         return {
-            "inputs_valid": inputs_valid,
-            "validscripts": validscripts,
+            "hash": header["hash"],
+            "previousblockhash": header.get("previousblockhash", ""),
+            "time": header["time"],
+            "height": header["height"],
+            "tx": [],
         }
 
+    def get_fee_rate(self, conf_target: int = 2) -> tuple[float, str]:
+        del conf_target
+        chain_client_settings = self._sc.getChainClientSettings(
+            self.coin_type()
+        )  # basicswap.json
+        override_feerate = chain_client_settings.get("override_feerate", None)
+        if override_feerate:
+            self._log.debug(
+                f"Fee rate override used for {self.coin_name()}: {override_feerate}"
+            )
+            return override_feerate, "override_feerate"
+
+        navoshi_per_byte = 125
+        navoshi_per_kb = navoshi_per_byte * 1000
+        nav_per_kb = navoshi_per_kb * 1e-8
+
+        return nav_per_kb, "default_feerate"
+
     def getHTLCSpendTxVSize(self, redeem: bool = True) -> int:
-        tx_vsize = (
-            5  # Add a few bytes, sequence in script takes variable amount of bytes
-        )
+        del redeem
+        # always using the size of a refund transaction since the size
+        # difference between redeem and refund transactions are small
+        return 1336
 
-        tx_vsize += 184 if redeem else 187
-        return tx_vsize
-
-    def getTxid(self, tx) -> bytes:
-        if isinstance(tx, str):
-            tx = bytes.fromhex(tx)
-        if isinstance(tx, bytes):
-            tx = self.loadTx(tx)
-        tx.rehash()
-        return i2b(tx.sha256)
-
-    def rescanBlockchainForAddress(self, height_start: int, addr_find: str):
-        # Very ugly workaround for missing `rescanblockchain` rpc command
-
-        chain_blocks: int = self.getChainHeight()
-
-        current_height: int = chain_blocks
-        block_hash = self.rpc("getblockhash", [current_height])
-
-        script_hash: bytes = self.decodeAddress(addr_find)
-        find_scriptPubKey = self.getDestForScriptHash(script_hash)
-
-        while current_height > height_start:
-            block_hash = self.rpc("getblockhash", [current_height])
-
-            block = self.rpc("getblock", [block_hash, False])
-            decoded_block = CBlock()
-            decoded_block = FromHex(decoded_block, block)
-            for tx in decoded_block.vtx:
-                for txo in tx.vout:
-                    if txo.scriptPubKey == find_scriptPubKey:
-                        tx.rehash()
-                        txid = i2b(tx.sha256)
-                        self._log.info(
-                            "Found output to addr: {} in tx {} in block {}".format(
-                                addr_find, txid.hex(), block_hash
-                            )
-                        )
-                        self._log.info(
-                            "rescanblockchain hack invalidateblock {}".format(
-                                block_hash
-                            )
-                        )
-                        self.rpc("invalidateblock", [block_hash])
-                        self.rpc("reconsiderblock", [block_hash])
-                        return
-            current_height -= 1
-
-    def getLockTxHeight(
+    def getNavLockTxHeight(
         self,
         txid,
         dest_address,
         bid_amount,
         rescan_from,
-        find_index: bool = False,
-        vout: int = -1,
+        lock_val: int = 0,
     ):
-        # Add watchonly address and rescan if required
-
-        if not self.isAddressMine(dest_address, or_watch_only=True):
-            self.importWatchOnlyAddress(dest_address, "bid")
-            self._log.info(
-                "Imported watch-only addr: {}".format(self._log.addr(dest_address))
-            )
-            self._log.info(
-                "Rescanning {} chain from height: {}".format(
-                    self.coin_name(), rescan_from
-                )
-            )
-            self.rescanBlockchainForAddress(rescan_from, dest_address)
-
-        return_txid = True if txid is None else False
-        if txid is None:
-            txns = self.rpc(
-                "listunspent",
-                [
-                    0,
-                    9999999,
-                    [
-                        dest_address,
-                    ],
-                ],
-            )
-
-            for tx in txns:
-                if self.make_int(tx["amount"]) == bid_amount:
-                    txid = bytes.fromhex(tx["txid"])
-                    break
-
-        if txid is None:
+        """BLSCT-specific lock tx lookup.
+        dest_address is the secret_hash hex. lock_val is the NAV CLTV lock block
+        height extracted from the fake participate script, used to discriminate
+        between UTxOs sharing the same secret_hash (e.g. in test environments
+        where the Particl HD wallet reuses the same secret)."""
+        del bid_amount, rescan_from, txid
+        if not dest_address:
             return None
 
+        secret_hash = dest_address.lower()
         try:
-            tx = self.rpc("gettransaction", [txid.hex()])
-
-            block_height = 0
-            if "blockhash" in tx:
-                block_header = self.rpc("getblockheader", [tx["blockhash"]])
-                block_height = block_header["height"]
-
-            rv = {
-                "depth": 0 if "confirmations" not in tx else tx["confirmations"],
-                "height": block_height,
-            }
-
+            utxos = self.listBlsctUnspent()
+            self._log.debug(f"getNavLockTxHeight: {len(utxos)} UTxOs from listblsctunspent, seeking secret_hash={secret_hash}")
+            for utxo in utxos:
+                utxo_spk = utxo.get("scriptPubKey", "").lower()
+                if not self.isHTLCScript(utxo_spk):
+                    continue
+                spk_bytes = bytes.fromhex(utxo_spk)
+                spk_secret_hash = atomic_swap_1.extractScriptSecretHash(spk_bytes).hex()
+                spk_lock_val = self.extractHTLCLockVal(spk_bytes, is_nav=True)
+                self._log.debug(f"getNavLockTxHeight: HTLC UTxO spk_secret_hash={spk_secret_hash} spk_lock_val={spk_lock_val}")
+                if spk_secret_hash == secret_hash and spk_lock_val == lock_val:
+                    confirmations = utxo.get("confirmations", 0)
+                    chain_info = self.rpc("getblockchaininfo")
+                    chain_height = chain_info["blocks"]
+                    block_height = max(0, chain_height - confirmations + 1) if confirmations > 0 else 0
+                    rv = {
+                        "depth": confirmations,
+                        "height": block_height,
+                        "outid": utxo.get("outid", None) or utxo.get("outputHash", ""),
+                    }
+                    self._log.info(f"getNavLockTxHeight found HTLC via listblsctunspent: {rv}")
+                    return rv
         except Exception as e:
-            self._log.debug(
-                "getLockTxHeight gettransaction failed: %s, %s", txid.hex(), str(e)
-            )
-            return None
+            self._log.error(f"getNavLockTxHeight listblsctunspent search failed: {e}")
 
-        if find_index:
-            tx_obj = self.rpc("decoderawtransaction", [tx["hex"]])
-            rv["index"] = find_vout_for_address_from_txobj(tx_obj, dest_address)
-            if rv["index"] is not None and rv["index"] >= 0:
-                rv["value"] = self.make_int(tx_obj["vout"][rv["index"]]["value"])
-
-        if return_txid:
-            rv["txid"] = txid.hex()
-
-        return rv
-
-    def getBlockWithTxns(self, block_hash):
-        # TODO: Bypass decoderawtransaction and getblockheader
-        block = self.rpc("getblock", [block_hash, False])
-        block_header = self.rpc("getblockheader", [block_hash])
-        decoded_block = CBlock()
-        decoded_block = FromHex(decoded_block, block)
-
-        tx_rv = []
-        for tx in decoded_block.vtx:
-            tx_hex = tx.serialize_with_witness().hex()
-            tx_dec = self.rpc("decoderawtransaction", [tx_hex])
-            if "hex" not in tx_dec:
-                tx_dec["hex"] = tx_hex
-
-            tx_rv.append(tx_dec)
-
-        block_rv = {
-            "hash": block_hash,
-            "previousblockhash": block_header["previousblockhash"],
-            "tx": tx_rv,
-            "confirmations": block_header["confirmations"],
-            "height": block_header["height"],
-            "time": block_header["time"],
-            "version": block_header["version"],
-            "merkleroot": block_header["merkleroot"],
-        }
-
-        return block_rv
-
-    def getScriptScriptSig(self, script: bytes) -> bytes:
-        return self.getP2SHP2WSHScriptSig(script)
-
-    def getScriptDest(self, script):
-        return self.getP2SHP2WSHDest(script)
-
-    def getDestForScriptHash(self, script_hash):
-        assert len(script_hash) == 20
-        return CScript([OP_HASH160, script_hash, OP_EQUAL])
-
-    def pubkey_to_segwit_address(self, pk: bytes) -> str:
-        pkh = hash160(pk)
-        script_out = self.getScriptForPubkeyHash(pkh)
-        return self.encodeSegwitAddressScript(script_out)
-
-    def createBLockTx(self, Kbs: bytes, output_amount: int, vkbv=None) -> bytes:
-        tx = CTransaction()
-        tx.nVersion = self.txVersion()
-        script_pk = self.getPkDest(Kbs)
-        tx.vout.append(self.txoType()(output_amount, script_pk))
-        return tx.serialize()
-
-    def spendBLockTx(
-        self,
-        chain_b_lock_txid: bytes,
-        address_to: str,
-        kbv: bytes,
-        kbs: bytes,
-        cb_swap_value: int,
-        b_fee: int,
-        restore_height: int,
-        spend_actual_balance: bool = False,
-        lock_tx_vout=None,
-    ) -> bytes:
-        self._log.info("spendBLockTx %s:\n", chain_b_lock_txid.hex())
-        wtx = self.rpc(
-            "gettransaction",
-            [
-                chain_b_lock_txid.hex(),
-            ],
-        )
-        lock_tx = self.loadTx(bytes.fromhex(wtx["hex"]))
-
-        Kbs = self.getPubkey(kbs)
-        script_pk = self.getPkDest(Kbs)
-        locked_n = findOutput(lock_tx, script_pk)
-        ensure(locked_n is not None, "Output not found in tx")
-        pkh_to = self.decodeAddress(address_to)
-
-        tx = CTransaction()
-        tx.nVersion = self.txVersion()
-
-        chain_b_lock_txid_int = b2i(chain_b_lock_txid)
-
-        script_sig = self.getInputScriptForPubkeyHash(self.getPubkeyHash(Kbs))
-
-        tx.vin.append(
-            CTxIn(
-                COutPoint(chain_b_lock_txid_int, locked_n),
-                nSequence=0,
-                scriptSig=script_sig,
-            )
-        )
-        tx.vout.append(
-            self.txoType()(cb_swap_value, self.getScriptForPubkeyHash(pkh_to))
-        )
-
-        pay_fee = self.getBLockSpendTxFee(tx, b_fee)
-        tx.vout[0].nValue = cb_swap_value - pay_fee
-
-        b_lock_spend_tx = tx.serialize()
-        b_lock_spend_tx = self.signTxWithKey(b_lock_spend_tx, kbs, cb_swap_value)
-
-        return bytes.fromhex(self.publishTx(b_lock_spend_tx))
-
-    def signTxWithKey(self, tx: bytes, key: bytes, prev_amount: int) -> bytes:
-        Key = self.getPubkey(key)
-        pkh = self.getPubkeyHash(Key)
-        script = self.getScriptForP2PKH(pkh)
-
-        sig = self.signTx(key, tx, 0, script, prev_amount)
-
-        stack = [
-            sig,
-            Key,
-        ]
-        return self.setTxSignature(tx, stack)
-
-    def findTxnByHash(self, txid_hex: str):
-        # Only works for wallet txns
-        try:
-            rv = self.rpc("gettransaction", [txid_hex])
-        except Exception as e:  # noqa: F841
-            self._log.debug(
-                "findTxnByHash getrawtransaction failed: {}".format(txid_hex)
-            )
-            return None
-        if "confirmations" in rv and rv["confirmations"] >= self.blocks_confirmed:
-            block_height = self.getBlockHeader(rv["blockhash"])["height"]
-            return {"txid": txid_hex, "amount": 0, "height": block_height}
         return None
 
-    def createSCLockTx(
-        self, value: int, script: bytearray, vkbv: bytes = None
-    ) -> bytes:
-        tx = CTransaction()
-        tx.nVersion = self.txVersion()
-        tx.vout.append(self.txoType()(value, self.getScriptDest(script)))
+    def getNewAddress(self, use_segwit: bool, label: str = "swap_receive") -> str:
+        del use_segwit
+        address: str = self.rpc(
+            "getnewaddress",
+            [
+                label,
+                "blsct",
+            ],
+        )
+        return address
 
-        return tx.serialize()
+    def getParticipateLockValue(self, offer) -> int:
+        itx_lock_time_half_in_blocks = offer.lock_value // 2 // 30  # half of ITX duration; 30s NAV block time
+        if offer.isSet("lock_blocks"):
+            nav_blocks = min(offer.lock_blocks, itx_lock_time_half_in_blocks)
+        else:
+            nav_blocks = itx_lock_time_half_in_blocks
+        return self.getChainHeight() + nav_blocks
 
-    def fundTx(
-        self,
-        tx_hex: str,
-        feerate: int,
-        lock_unspents: bool = True,
-        subfee: bool = False,
-    ):
-        feerate_str = self.format_amount(feerate)
-        # TODO: unlock unspents if bid cancelled
-        options = {
-            "lockUnspents": lock_unspents,
-            "feeRate": feerate_str,
+    def getPrevOutInfoFromOffChainTxn(self, txn_hex: str, secret_hash: bytes) -> PrevOutInfo:
+        txjs = self.rpc_wallet("decodeblsctrawtransaction", [txn_hex])
+        self._log.debug(f"getPrevOutInfoFromOffChainTxn: secret_hash={secret_hash.hex()}")
+        for output in txjs.get("outputs", []):
+            spk = output.get("scriptPubKey", "")
+            if not self.isHTLCScript(spk):
+                continue
+            spk_secret_hash = atomic_swap_1.extractScriptSecretHash(bytes.fromhex(spk))
+            self._log.debug(f"found HTLC script: spk_secret_hash={spk_secret_hash.hex()}")
+            if secret_hash == spk_secret_hash:
+                return {
+                    "outid": output["outputHash"],
+                    "amount": output["amount"],
+                    "gamma": output["gamma"],
+                }
+        raise ValueError(f"No HTLC output found for secret_hash={secret_hash.hex()}")
+
+    def getProofOfFunds(self, amount_for, extra_commit_bytes):
+        amount_btc = amount_for / 100_000_000
+        additional_commitment = extra_commit_bytes.hex()
+        result = self.rpc_wallet(
+            "createblsctbalanceproof", [amount_btc, additional_commitment]
+        )
+        proof_hex = result["proof"]
+        return ("blsct_balance_proof", proof_hex, [])
+
+    def getPtxInfoOfferer(self, bid_id: bytes) -> PtxInfoOfferer | None:
+        return self._ptx_info_offerer.get(bid_id, None)
+
+    def getSeedHash(self, seed: bytes) -> bytes:
+        return seed
+
+    def getSpendingPubKey(self) -> bytes:
+        return bytes(96)
+
+    def getWalletInfo(self):
+        rv = super().getWalletInfo()
+        # listblsctunspent returns both wallet outputs (address present) and
+        # HTLC watch-only imports (no address). The base getwalletinfo balance
+        # counts the imported HTLC outputs, inflating the displayed total.
+        confirmed = 0.0
+        unconfirmed = 0.0
+        try:
+            outputs = self.rpc_wallet("listblsctunspent", [0])
+            for o in outputs:
+                if not o.get("address"):
+                    continue
+                amount = float(o.get("amount", 0))
+                if o.get("confirmations", 0) >= 1:
+                    confirmed += amount
+                else:
+                    unconfirmed += amount
+            rv["balance"] = round(confirmed, 8)
+            rv["unconfirmed_balance"] = round(unconfirmed, 8)
+        except Exception as e:
+            self._log.warning(f"NAV getWalletInfo listblsctunspent failed: {e}")
+        return rv
+
+    def getWalletSeedID(self) -> str:
+        """
+        The Navio wallet has been initialized using the root key generated by
+        `getWalletKey(c, 1)` as the seed.
+        """
+        return self.rpc("getblsctseed")
+
+    def importBlsctScript(self, params: dict, rescan_from: None | int) -> dict:
+        if rescan_from is not None:
+            try:
+                chain_height = self.rpc("getblockchaininfo")["blocks"]
+                rescan_from = min(rescan_from, chain_height)
+            except Exception as e:
+                self._log.warning(f"importBlsctScript: could not get chain height: {e}")
+        rescan = rescan_from is not None
+        args = [params, rescan]
+        if rescan:
+            args.append(rescan_from)
+        return self.rpc_wallet("importblsctscript", args)
+
+    def initialiseWallet(self, key_bytes, restore_time: int = -1):
+        del restore_time
+        key_wif = self.encodeKey(key_bytes)
+        try:
+            self.rpc_wallet("setblsctseed", [key_wif])
+        except Exception as e:
+             if "Already have this key" in str(e):
+                 self._log.info(f"The same seed ({key_wif}) has already been set...")
+             else:
+                 self._log.debug(f"setblsctseed failed: {e}")
+                 raise (e)
+
+    def isHTLCScript(self, script: str) -> bool:
+        """
+        Determines if a script is a Navio HTLC script.
+
+        OP_IF
+            OP_SIZE
+            32
+            OP_EQUALVERIFY
+            OP_SHA256
+            <32-byte secret hash>
+            OP_EQUALVERIFY
+            <48-byte address_a>
+        OP_ELSE
+            <1-4 byte locktime>
+            OP_CHECKLOCKTIMEVERIFY
+            OP_DROP
+            <48-byte address_b>
+        OP_ENDIF
+        OP_BLSCHECKSIG
+
+        >>> hex = "6382012088a820b812e53d1bd15a928803df44ab86c6a286d9a3d6625a3738f"
+        >>> hex += "bed32d89a4c7c178830a7b9a59a0e305eef4f756909e6fa107091fc6d2b2743"
+        >>> hex += "3d110d5d3c95ff987a0182bbd2e19897ee71af0466006cc2755467042c688b6"
+        >>> hex += "9b17530a7b9a59a0e305eef4f756909e6fa107091fc6d2b27433d110d5d3c95"
+        >>> hex += "ff987a0182bbd2e19897ee71af0466006cc2755468b3"
+        >>> nav = NAVInterface()
+        >>> nav.isHTLCScript(hex)
+        True
+        >>> hex = "6382012088a8206756e66c48945a6851790e94fed56b86ec9d1e05116d4d289bf"
+        >>> hex += "62f858389c3998830a6c43cded614e403d715cd7f28a57736214937dd811bd7e2927eed4cd"
+        >>> hex += "904ee8df0066923c7dc021a36e94fa6f8fa21e36703710040b17530a769dfbee940c4f72c1"
+        >>> hex += "29b5a315822dabda7932f5f12b8d1c56d2335544995504af3e11446a3b544cb6ec51403377"
+        >>> hex += "33468b3"
+        >>> nav.isHTLCScript(hex)
+        True
+        >>> nav.isHTLCScript("76a91488ac")
+        False
+        """
+        script = script.lower()
+        pos = 0
+
+        def consume(exp: str) -> bool:
+            nonlocal pos
+            if pos + len(exp) > len(script):
+                return False
+            if script[pos:pos + len(exp)] == exp:
+                pos += len(exp)
+                return True
+            else:
+                return False
+
+        def skip(n: int) -> bool:
+            nonlocal pos
+            pos = pos + n*2
+            return pos <= len(script)
+
+        def consume_locktime() -> bool:
+            nonlocal pos
+            push_size = int(script[pos:pos + 2], 16)
+            return skip(push_size + 1)
+
+        def all_consumed() -> bool:
+            return pos == len(script)
+
+        return (
+            # 63 (OP_IF)
+            # 82 (OP_SIZE)
+            # 01 20 (32 bytes)
+            # 88 (OP_EQUALVERIFY)
+            # a8 (OP_SHA256)
+            # 20 (Data Length 32)
+            consume("6382012088a820") and
+            # secret hash
+            skip(32) and
+            # 88 (OP_EQUALVERIFY)
+            # 30 (Data Length 48)
+            consume("8830") and
+            # address_a
+            skip(48) and
+            # 67 (OP_ELSE)
+            consume("67") and
+            # 1-4 byte locktime
+            consume_locktime() and
+            # b1 (OP_CHECKLOCKTIMEVERIFY)
+            # 75 (OP_DROP
+            # 30 (Data Length 48)
+            consume("b17530") and
+            # address_b
+            skip(48) and
+            # 68 (OP_ENDIF)
+            # b3 (OP_BLSCHECKSIG)
+            consume("68b3") and
+            # should have read everything
+            all_consumed()
+        )
+
+    # TODO NAV write test
+    def isHTLCTxnSpent(self, script: bytes) -> bool:
+        secret_hash = atomic_swap_1.extractScriptSecretHash(script)
+        locktime = self.extractHTLCLockVal(script, is_nav=False)
+        self._log.debug(f"isHTLCTxnSpent: secret_hash={secret_hash.hex()} {locktime=} script={script.hex()}")
+        try:
+            utxos = self.listBlsctUnspent()
+            for utxo in utxos:
+                spk = utxo.get("scriptPubKey", "")
+                if not self.isHTLCScript(spk):
+                    continue
+                spk_bytes = bytes.fromhex(spk)
+                spk_secret_hash = atomic_swap_1.extractScriptSecretHash(spk_bytes)
+                spk_lock_val = self.extractHTLCLockVal(spk_bytes, is_nav=True)
+                if secret_hash == spk_secret_hash and locktime == spk_lock_val:
+                    # UTxO appears in wallet — verify it's still in the confirmed UTXO set.
+                    # listblsctunspent on watchonly wallets does not remove a UTxO when it
+                    # is spent by an external wallet.  gettxout queries the consensus UTXO
+                    # set directly (wallet-independent, mempool-independent) and returns an
+                    # empty result once the output is confirmed-spent.
+                    outid = utxo.get("outid")
+                    if outid:
+                        result = self.rpc("gettxout", [outid])
+                        if result:
+                            # Still in consensus UTXO set → genuinely unspent
+                            self._log.debug(f"isHTLCTxnSpent: outid={outid[:16]}... in UTXO set (unspent)")
+                            return False
+                        else:
+                            # Empty result → confirmed spent
+                            self._log.debug(f"isHTLCTxnSpent: outid={outid[:16]}... not in UTXO set (spent)")
+                            return True
+                    # No outid available — fall back to listblsctunspent result
+                    self._log.debug(f"isHTLCTxnSpent: found matching utxo, not spent yet: {utxo=}")
+                    return False
+            self._log.debug(f"isHTLCTxnSpent: {secret_hash.hex()} is spent")
+            return True
+
+        except Exception as e:
+            self._log.error(f"Failed to check if HTLC txn is spent: {e}")
+        return False
+
+    def isTxNonFinalError(self, err_str: str) -> bool:
+        # non-final-input: refund submitted before CLTV locktime expires
+        # bad-inputs-unknown: refund input not in UTXO set; PTX still in mempool (BLSCT outputs unspendable until confirmed)
+        return "non-final-input" in err_str or "bad-input-unknown" in err_str or "bad-inputs-unknown" in err_str or "'code': 25" in err_str
+
+    def listBlsctUnspent(self) -> list:
+        return self.rpc_wallet("listblsctunspent", [0])
+
+    def publishTx(self, tx: bytes):
+        try:
+            res = self.rpc("sendrawtransaction", [tx.hex()])
+        except Exception as e:
+            if self.isTxNonFinalError(str(e)):
+                raise TemporaryError(str(e))
+            raise
+        return res
+
+    def signBlsct(self, txn):
+        signed_txn = self.rpc("signblsctrawtransaction", [txn])
+        return signed_txn
+
+    def stashPtxOfferer(self, bid_id: bytes, script: bytearray, tx_data_funded: bytes) -> None:
+        self._ptx_info_offerer[bid_id] = PtxInfoOfferer(script=script, tx_data_funded=tx_data_funded)
+
+    def verifyProofOfFunds(self, address, signature, utxos, extra_commit_bytes):
+        additional_commitment = extra_commit_bytes.hex()
+        result = self.rpc(
+            "verifyblsctbalanceproof", [signature, additional_commitment]
+        )
+        if not result.get("valid", False):
+            raise ValueError("BLSCT balance proof invalid")
+        min_amount_btc = result["min_amount"]
+        return int(round(min_amount_btc * 100_000_000))
+
+    def verifyRawTransaction(self, txn, prevouts):
+        del prevouts
+        res = self.rpc("testmempoolaccept", [[txn]])
+
+        ro = {
+            "inputs_valid": True,
+            "validscripts": 1,
         }
-        rv = self.rpc("fundrawtransaction", [tx_hex, options])
-
-        # Sign transaction then strip witness data to fill scriptsig
-        rv = self.rpc("signrawtransaction", [rv["hex"]])
-
-        tx_signed = self.loadTx(bytes.fromhex(rv["hex"]))
-        if len(tx_signed.vin) != len(tx_signed.wit.vtxinwit):
-            raise ValueError("txn has non segwit input")
-        for witness_data in tx_signed.wit.vtxinwit:
-            if len(witness_data.scriptWitness.stack) < 2:
-                raise ValueError("txn has non segwit input")
-
-        return tx_signed.serialize_without_witness()
-
-    def fundSCLockTx(self, tx_bytes: bytes, feerate, vkbv=None) -> bytes:
-        tx_funded = self.fundTx(tx_bytes.hex(), feerate)
-        return tx_funded
-
-    def createSCLockRefundTx(
-        self,
-        tx_lock_bytes,
-        script_lock,
-        Kal,
-        Kaf,
-        lock1_value,
-        csv_val,
-        tx_fee_rate,
-        vkbv=None,
-    ):
-        tx_lock = CTransaction()
-        tx_lock = self.loadTx(tx_lock_bytes)
-
-        output_script = self.getScriptDest(script_lock)
-        locked_n = findOutput(tx_lock, output_script)
-        ensure(locked_n is not None, "Output not found in tx")
-        locked_coin = tx_lock.vout[locked_n].nValue
-
-        tx_lock.rehash()
-        tx_lock_id_int = tx_lock.sha256
-
-        refund_script = self.genScriptLockRefundTxScript(Kal, Kaf, csv_val)
-        tx = CTransaction()
-        tx.nVersion = self.txVersion()
-        tx.vin.append(
-            CTxIn(
-                COutPoint(tx_lock_id_int, locked_n),
-                nSequence=lock1_value,
-                scriptSig=self.getScriptScriptSig(script_lock),
-            )
-        )
-        tx.vout.append(self.txoType()(locked_coin, self.getScriptDest(refund_script)))
-
-        dummy_witness_stack = self.getScriptLockTxDummyWitness(script_lock)
-        witness_bytes = self.getWitnessStackSerialisedLength(dummy_witness_stack)
-        vsize = self.getTxVSize(tx, add_witness_bytes=witness_bytes)
-        pay_fee = round(tx_fee_rate * vsize / 1000)
-        tx.vout[0].nValue = locked_coin - pay_fee
-
-        tx.rehash()
-        self._log.info(
-            "createSCLockRefundTx {}{}.".format(
-                self._log.id(i2b(tx.sha256)),
-                (
-                    ""
-                    if self._log.safe_logs
-                    else f":\n    fee_rate, vsize, fee: {tx_fee_rate}, {vsize}, {pay_fee}"
-                ),
-            )
-        )
-
-        return tx.serialize(), refund_script, tx.vout[0].nValue
-
-    def createSCLockRefundSpendTx(
-        self,
-        tx_lock_refund_bytes,
-        script_lock_refund,
-        pkh_refund_to,
-        tx_fee_rate,
-        vkbv=None,
-    ):
-        # Returns the coinA locked coin to the leader
-        # The follower will sign the multisig path with a signature encumbered by the leader's coinB spend pubkey
-        # If the leader publishes the decrypted signature the leader's coinB spend privatekey will be revealed to the follower
-
-        tx_lock_refund = self.loadTx(tx_lock_refund_bytes)
-
-        output_script = self.getScriptDest(script_lock_refund)
-        locked_n = findOutput(tx_lock_refund, output_script)
-        ensure(locked_n is not None, "Output not found in tx")
-        locked_coin = tx_lock_refund.vout[locked_n].nValue
-
-        tx_lock_refund.rehash()
-        tx_lock_refund_hash_int = tx_lock_refund.sha256
-
-        tx = CTransaction()
-        tx.nVersion = self.txVersion()
-        tx.vin.append(
-            CTxIn(
-                COutPoint(tx_lock_refund_hash_int, locked_n),
-                nSequence=0,
-                scriptSig=self.getScriptScriptSig(script_lock_refund),
-            )
-        )
-
-        tx.vout.append(
-            self.txoType()(locked_coin, self.getScriptForPubkeyHash(pkh_refund_to))
-        )
-
-        dummy_witness_stack = self.getScriptLockRefundSpendTxDummyWitness(
-            script_lock_refund
-        )
-        witness_bytes = self.getWitnessStackSerialisedLength(dummy_witness_stack)
-        vsize = self.getTxVSize(tx, add_witness_bytes=witness_bytes)
-        pay_fee = round(tx_fee_rate * vsize / 1000)
-        tx.vout[0].nValue = locked_coin - pay_fee
-
-        tx.rehash()
-        self._log.info(
-            "createSCLockRefundSpendTx {}{}.".format(
-                self._log.id(i2b(tx.sha256)),
-                (
-                    ""
-                    if self._log.safe_logs
-                    else f":\n    fee_rate, vsize, fee: {tx_fee_rate}, {vsize}, {pay_fee}"
-                ),
-            )
-        )
-
-        return tx.serialize()
-
-    def createSCLockRefundSpendToFTx(
-        self,
-        tx_lock_refund_bytes,
-        script_lock_refund,
-        pkh_dest,
-        tx_fee_rate,
-        vkbv=None,
-        kbsf=None,
-    ):
-        # lock refund swipe tx
-        # Sends the coinA locked coin to the follower
-
-        tx_lock_refund = self.loadTx(tx_lock_refund_bytes)
-
-        output_script = self.getScriptDest(script_lock_refund)
-        locked_n = findOutput(tx_lock_refund, output_script)
-        ensure(locked_n is not None, "Output not found in tx")
-        locked_coin = tx_lock_refund.vout[locked_n].nValue
-
-        A, B, lock2_value, C = extractScriptLockRefundScriptValues(script_lock_refund)
-
-        tx_lock_refund.rehash()
-        tx_lock_refund_hash_int = tx_lock_refund.sha256
-
-        tx = CTransaction()
-        tx.nVersion = self.txVersion()
-        tx.vin.append(
-            CTxIn(
-                COutPoint(tx_lock_refund_hash_int, locked_n),
-                nSequence=lock2_value,
-                scriptSig=self.getScriptScriptSig(script_lock_refund),
-            )
-        )
-
-        tx.vout.append(
-            self.txoType()(locked_coin, self.getScriptForPubkeyHash(pkh_dest))
-        )
-
-        dummy_witness_stack = self.getScriptLockRefundSwipeTxDummyWitness(
-            script_lock_refund
-        )
-        witness_bytes = self.getWitnessStackSerialisedLength(dummy_witness_stack)
-        vsize = self.getTxVSize(tx, add_witness_bytes=witness_bytes)
-        pay_fee = round(tx_fee_rate * vsize / 1000)
-        tx.vout[0].nValue = locked_coin - pay_fee
-
-        tx.rehash()
-        self._log.info(
-            "createSCLockRefundSpendToFTx {}{}.".format(
-                self._log.id(i2b(tx.sha256)),
-                (
-                    ""
-                    if self._log.safe_logs
-                    else f":\n    fee_rate, vsize, fee: {tx_fee_rate}, {vsize}, {pay_fee}"
-                ),
-            )
-        )
-
-        return tx.serialize()
-
-    def createSCLockSpendTx(
-        self, tx_lock_bytes, script_lock, pkh_dest, tx_fee_rate, vkbv=None, fee_info={}
-    ):
-        tx_lock = self.loadTx(tx_lock_bytes)
-        output_script = self.getScriptDest(script_lock)
-        locked_n = findOutput(tx_lock, output_script)
-        ensure(locked_n is not None, "Output not found in tx")
-        locked_coin = tx_lock.vout[locked_n].nValue
-
-        tx_lock.rehash()
-        tx_lock_id_int = tx_lock.sha256
-
-        tx = CTransaction()
-        tx.nVersion = self.txVersion()
-        tx.vin.append(
-            CTxIn(
-                COutPoint(tx_lock_id_int, locked_n),
-                scriptSig=self.getScriptScriptSig(script_lock),
-            )
-        )
-
-        tx.vout.append(
-            self.txoType()(locked_coin, self.getScriptForPubkeyHash(pkh_dest))
-        )
-
-        dummy_witness_stack = self.getScriptLockTxDummyWitness(script_lock)
-        witness_bytes = self.getWitnessStackSerialisedLength(dummy_witness_stack)
-        vsize = self.getTxVSize(tx, add_witness_bytes=witness_bytes)
-        pay_fee = round(tx_fee_rate * vsize / 1000)
-        tx.vout[0].nValue = locked_coin - pay_fee
-
-        fee_info["fee_paid"] = pay_fee
-        fee_info["rate_used"] = tx_fee_rate
-        fee_info["witness_bytes"] = witness_bytes
-        fee_info["vsize"] = vsize
-
-        tx.rehash()
-        self._log.info(
-            "createSCLockSpendTx {}{}.".format(
-                self._log.id(i2b(tx.sha256)),
-                (
-                    ""
-                    if self._log.safe_logs
-                    else f":\n    fee_rate, vsize, fee: {tx_fee_rate}, {vsize}, {pay_fee}"
-                ),
-            )
-        )
-
-        return tx.serialize()
+        return ro

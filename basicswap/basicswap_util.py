@@ -67,6 +67,10 @@ class MessageTypes(IntEnum):
     PORTAL_OFFER = auto()
     PORTAL_SEND = auto()
 
+    NAV_SECRET_REVEAL = auto()
+    NAV_PTX_IMPORT = auto()
+    NAV_ITX_IMPORT = auto()
+
 
 class AddressTypes(IntEnum):
     OFFER = auto()

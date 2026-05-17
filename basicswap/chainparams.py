@@ -465,7 +465,7 @@ chainparams = {
         },
     },
     Coins.NAV: {
-        "name": "navcoin",
+        "name": "navio",
         "ticker": "NAV",
         "message_magic": "Navcoin Signed Message:\n",
         "blocks_target": 30,
@@ -484,6 +484,7 @@ chainparams = {
             "max_amount": 10000000 * COIN,
         },
         "testnet": {
+            "name": "testnet7",
             "rpcport": 44445,
             "pubkey_address": 111,
             "script_address": 196,

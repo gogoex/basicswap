@@ -145,6 +145,7 @@ class OfferMessage(NonProtobufClass):
         19: ("proof_utxos", NPBW_BYTES, 0),
         20: ("auto_accept_type", NPBW_INT, 0),
         21: ("message_nets", NPBW_BYTES, NPBF_STR),
+        22: ("lock_blocks", NPBW_INT, 0),
     }
 
 
@@ -161,6 +162,9 @@ class BidMessage(NonProtobufClass):
         9: ("proof_utxos", NPBW_BYTES, 0),
         10: ("pkhash_buyer_to", NPBW_BYTES, 0),
         11: ("message_nets", NPBW_BYTES, NPBF_STR),
+        12: ("seller_contract_pubkey", NPBW_BYTES, 0),
+        13: ("buyer_contract_pubkey", NPBW_BYTES, 0),
+        14: ("nav_redeem_addr", NPBW_BYTES, NPBF_STR),
     }
 
 
@@ -171,6 +175,8 @@ class BidAcceptMessage(NonProtobufClass):
         2: ("initiate_txid", NPBW_BYTES, 0),
         3: ("contract_script", NPBW_BYTES, 0),
         4: ("pkhash_seller", NPBW_BYTES, 0),
+        5: ("seller_contract_pubkey", NPBW_BYTES, 0),
+        6: ("nav_redeem_addr", NPBW_BYTES, NPBF_STR),
     }
 
 
