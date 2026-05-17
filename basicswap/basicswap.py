@@ -7244,9 +7244,12 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                         self.saveBid(bid_id, bid)
                         return False
                     except Exception as e:
-                        self.log.warning(
-                            f"Failed to publish NAV PTX for bid {self.log.id(bid_id)}: {e}"
-                        )
+                        if "bad-txns-inputs-missingorspent" in str(e):
+                            self.setBidError(bid_id, bid, f"NAV PTX input spent: {e}")
+                        else:
+                            self.log.warning(
+                                f"Failed to publish NAV PTX for bid {self.log.id(bid_id)}: {e}"
+                            )
                         return False
                 if bid.participate_tx is not None and bid.participate_tx.script is None:
                     ptx_info = ci_to.getPtxInfoOfferer(bid_id)
