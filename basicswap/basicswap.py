@@ -579,7 +579,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         self._bid_expired_leeway = 5
 
         self.swaps_in_progress = dict()
-        self._pending_nav_itx_imports: dict = {}  # bid_id -> parsed NAV_ITX_IMPORT data (timing stash)
 
         self.threads = []
         self.thread_pool = concurrent.futures.ThreadPoolExecutor(
@@ -7502,6 +7501,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 f"{self.logIDB(bid_id)}: Abandoning for testing: {bid.debug_ind}, {DebugTypes(bid.debug_ind).name}."
             )
             bid.setState(BidStates.BID_ABANDONED)
+            if Coins(offer.coin_to) == Coins.NAV:
+                self.ci(Coins.NAV).clearPtxData(bid_id)
+            if Coins(offer.coin_from) == Coins.NAV:
+                self.ci(Coins.NAV).clearPendingItxImport(bid_id)
             self.logBidEvent(
                 bid.bid_id,
                 EventLogTypes.DEBUG_TWEAK_APPLIED,
@@ -8809,6 +8812,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 bid.setState(BidStates.SWAP_COMPLETED)
                 if coin_to == Coins.NAV:
                     ci_to.clearPtxData(bid_id)
+                if coin_from == Coins.NAV:
+                    ci_from.clearPendingItxImport(bid_id)
                 self.saveBid(bid_id, bid)
                 try:
                     self.notify(
@@ -9121,6 +9126,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                             f"{self.logIDB(bid_id)}: Abandoning for testing: {bid.debug_ind}, {DebugTypes(bid.debug_ind).name}."
                         )
                         bid.setState(BidStates.BID_ABANDONED)
+                        if coin_to == Coins.NAV:
+                            ci_to.clearPtxData(bid_id)
+                        if coin_from == Coins.NAV:
+                            ci_from.clearPendingItxImport(bid_id)
                         self.logBidEvent(
                             bid.bid_id,
                             EventLogTypes.DEBUG_TWEAK_APPLIED,
@@ -9203,6 +9212,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
                     if not was_received:
                         bid.setState(BidStates.SWAP_COMPLETED)
+                        if coin_to == Coins.NAV:
+                            ci_to.clearPtxData(bid_id)
+                        if coin_from == Coins.NAV:
+                            ci_from.clearPendingItxImport(bid_id)
                         try:
                             self.notify(
                                 NT.SWAP_COMPLETED,

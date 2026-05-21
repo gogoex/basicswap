@@ -214,12 +214,13 @@ def handle_swap_participating(sc, bid_id, bid, coin_from, coin_to) -> bool:
 
 # [processBidAccept]
 def import_nav_itx_and_rescan_nav_chain(sc, bid_id, bid) -> None:
-    if bid_id not in sc._pending_nav_itx_imports:
+    ci_nav = sc.ci(Coins.NAV)
+    if not ci_nav.hasPendingItxImport(bid_id):
         return
 
     # Import NAV Itx
     sc.log.info(f"processBidAccept: draining stashed NAV_ITX_IMPORT for bid {sc.log.id(bid_id)}")
-    stash = sc._pending_nav_itx_imports.pop(bid_id)
+    stash = ci_nav.popPendingItxImport(bid_id)
     secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
     params = {
         "type": "atomic_swap",
@@ -362,14 +363,14 @@ def process_nav_itx_import(sc, msg) -> None:
         # BID_ACCEPT may arrive slightly after NAV_ITX_IMPORT (SMSG ordering not guaranteed).
         # Stash the data; processBidAccept will drain it once the bid is in-progress.
         sc.log.warning(f"processNavItxImport: bid {sc.log.id(bid_id)} not yet in progress — stashing for later")
-        sc._pending_nav_itx_imports[bid_id] = {
+        sc.ci(Coins.NAV).stashPendingItxImport(bid_id, {
             "nav_addr_redeem": nav_addr_redeem,
             "nav_addr_refund": nav_addr_refund,
             "blinding_key": blinding_key,
             "lock_value": lock_value,
             "rescan_from": rescan_from,
             "tx_data_funded_bytes": tx_data_funded_bytes,
-        }
+        })
         return
 
     bid = sc.swaps_in_progress[bid_id][0]
