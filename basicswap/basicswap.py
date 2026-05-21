@@ -5753,7 +5753,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 coin_to = Coins(offer.coin_to)
                 if Coins.NAV in (coin_from, coin_to):
                     # Share offerer pubkey to bidder so that bidder can compute bindingKey
-                    msg_buf.seller_contract_pubkey = pubkey_refund
+                    msg_buf.offerer_contract_pubkey = pubkey_refund
 
                     if coin_from == Coins.NAV:
                         msg_buf.pkhash_seller = bid.pkhash_seller
@@ -5991,6 +5991,18 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         # bid.message_nets is a local field denoting the network/s to send to
         if offer.smsg_payload_version is not None and offer.smsg_payload_version > 1:
             msg_buf.message_nets = self.getMessageNetsString()
+
+        bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
+        if Coins(offer.coin_from) == Coins.NAV:
+            # Send bidder public key to offerer, so the offerer can compute blindingKey
+            msg_buf.bidder_contract_pubkey = self.getContractPubkey(bid_date, bid.contract_count)
+            # Send address_a from bidder's wallet to offerer so that offerer can use it as the itx redeem address
+            if bid.nav_redeem_addr is None:
+                bid.nav_redeem_addr = self.getReceiveAddressForCoin(Coins.NAV)
+            msg_buf.nav_redeem_addr = bid.nav_redeem_addr
+
+        if Coins(offer.coin_to) == Coins.NAV:
+            msg_buf.bidder_contract_pubkey = self.getContractPubkey(bid_date, bid.contract_count)
 
         return msg_buf
 
@@ -7074,6 +7086,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 None,
             )
 
+        if coin_to == Coins.NAV:
+            return nav_logic.create_nav_ptx(self, bid_id, bid, offer, ci)
+
         if ci.using_segwit():
             p2wsh = ci.getScriptDest(participate_script)
             addr_to = ci.encodeScriptDest(p2wsh)
@@ -7119,7 +7134,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         ci = self.ci(coin_type)
 
         if for_txn_type == "participate":
-            prev_txnid = bid.participate_tx.txid.hex()
+            # For NAV, txid may be None until the on-chain outid is resolved via listblsctunspent;
+            # prev_txnid is not used in the NAV branch so a None value is safe there.
+            prev_txnid = bid.participate_tx.txid.hex() if bid.participate_tx.txid is not None else None
             prev_n = bid.participate_tx.vout
             txn_script = bid.participate_tx.script
             prev_amount = bid.amount_to
@@ -7135,17 +7152,21 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         else:
             script_pub_key = ci.get_p2sh_script_pubkey(txn_script).hex()
 
-        prevout = {
-            "txid": prev_txnid,
-            "vout": prev_n,
-            "scriptPubKey": script_pub_key,
-            "redeemScript": txn_script.hex(),
-            "amount": ci.format_amount(prev_amount),
-        }
-
         bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
         privkey = self.getContractPrivkey(bid_date, bid.contract_count)
         pubkey = ci.getPubkey(privkey)
+
+        if coin_type == Coins.NAV:
+            nav_txn, is_ptx = (bid.participate_tx, True) if for_txn_type == "participate" else (bid.initiate_tx, False)
+            prevout = nav_logic.build_nav_redeem_prevout(self, bid, ci, nav_txn, privkey, txn_script, is_ptx)
+        else:
+            prevout = {
+                "txid": prev_txnid,
+                "vout": prev_n,
+                "scriptPubKey": script_pub_key,
+                "redeemScript": txn_script.hex(),
+                "amount": ci.format_amount(prev_amount),
+            }
 
         secret = bid.recovered_secret
         if secret is None:
@@ -7183,6 +7204,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         self.log.debug(f"addr_redeem_out {addr_redeem_out}")
 
+        if coin_type == Coins.NAV:
+            txn_script = b'\x20' + secret + b'\x51'
+
         redeem_txn = ci.createRedeemTxn(
             prevout, addr_redeem_out, amount_out, txn_script
         )
@@ -7190,45 +7214,54 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         if ci.using_segwit():
             options["force_segwit"] = True
 
-        if coin_type in (Coins.NAV, Coins.DCR):
-            privkey_wif = self.ci(coin_type).encodeKey(privkey)
-            redeem_sig = ci.getTxSignature(redeem_txn, prevout, privkey_wif)
+        if coin_type == Coins.NAV:
+            redeem_txn = ci.signBlsct(redeem_txn)
         else:
-            privkey_wif = self.ci(Coins.PART).encodeKey(privkey)
-            redeem_sig = self.callcoinrpc(
-                Coins.PART,
-                "createsignaturewithkey",
-                [redeem_txn, prevout, privkey_wif, "ALL", options],
-            )
+            if coin_type in (Coins.DCR,):
+                privkey_wif = self.ci(coin_type).encodeKey(privkey)
+                redeem_sig = ci.getTxSignature(redeem_txn, prevout, privkey_wif)
+            else:
+                privkey_wif = self.ci(Coins.PART).encodeKey(privkey)
+                redeem_sig = self.callcoinrpc(
+                    Coins.PART,
+                    "createsignaturewithkey",
+                    [redeem_txn, prevout, privkey_wif, "ALL", options],
+                )
 
-        if coin_type == Coins.PART or ci.using_segwit():
-            witness_stack = [
-                bytes.fromhex(redeem_sig),
-                pubkey,
-                secret,
-                bytes((1,)),  # Converted to OP_1 in Decred push_script_data
-                txn_script,
-            ]
-            redeem_txn = ci.setTxSignature(
-                bytes.fromhex(redeem_txn), witness_stack
-            ).hex()
-        else:
-            script = (len(redeem_sig) // 2).to_bytes(1, "big") + bytes.fromhex(
-                redeem_sig
-            )
-            script += (33).to_bytes(1, "big") + pubkey
-            script += (32).to_bytes(1, "big") + secret
-            script += (OpCodes.OP_1).to_bytes(1, "big")
-            script += (
-                (OpCodes.OP_PUSHDATA1).to_bytes(1, "big")
-                + (len(txn_script)).to_bytes(1, "big")
-                + txn_script
-            )
-            redeem_txn = ci.setTxScriptSig(bytes.fromhex(redeem_txn), 0, script).hex()
+            if coin_type == Coins.PART or ci.using_segwit():
+                witness_stack = [
+                    bytes.fromhex(redeem_sig),
+                    pubkey,
+                    secret,
+                    bytes((1,)),  # Converted to OP_1 in Decred push_script_data
+                    txn_script,
+                ]
+                redeem_txn = ci.setTxSignature(
+                    bytes.fromhex(redeem_txn), witness_stack
+                ).hex()
+            else:
+                script = (len(redeem_sig) // 2).to_bytes(1, "big") + bytes.fromhex(
+                    redeem_sig
+                )
+                script += (33).to_bytes(1, "big") + pubkey
+                script += (32).to_bytes(1, "big") + secret
+                script += (OpCodes.OP_1).to_bytes(1, "big")
+                script += (
+                    (OpCodes.OP_PUSHDATA1).to_bytes(1, "big")
+                    + (len(txn_script)).to_bytes(1, "big")
+                    + txn_script
+                )
+                redeem_txn = ci.setTxScriptSig(bytes.fromhex(redeem_txn), 0, script).hex()
 
-        if coin_type in (Coins.NAV, Coins.DCR):
+        if coin_type in (Coins.DCR,):
             # Only checks signature
             ro = ci.verifyRawTransaction(redeem_txn, [prevout])
+        elif coin_type == Coins.NAV:
+            # signBlsct validates internally; NAV-specific prevout fields (outid, spending_key) are incompatible with verifyRawTransaction
+            ro = {
+                "inputs_valid": True,
+                "validscripts": 1,
+            }
         else:
             ro = self.callcoinrpc(
                 Coins.PART, "verifyrawtransaction", [redeem_txn, [prevout]]
@@ -7249,6 +7282,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     txsize = len(redeem_txn) // 2
                     self.log.debug(f"size paid, actual size {tx_vsize} {txsize}")
                     ensure(tx_vsize >= txsize, "underpaid fee")
+                elif coin_type == Coins.NAV:
+                    # signBlsct embeds fee internally; getHTLCSpendTxVSize estimate unreliable for BLSCT
+                    pass
                 elif ci.use_tx_vsize():
                     self.log.debug(
                         "vsize paid, actual vsize %d %d", tx_vsize, redeem_txjs["vsize"]
@@ -7260,10 +7296,19 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     )
                     ensure(tx_vsize >= redeem_txjs["size"], "underpaid fee")
 
-            redeem_txid = ci.getTxid(bytes.fromhex(redeem_txn))
-            self.log.debug(
-                f"Have valid redeem tx {self.log.id(redeem_txid)} for contract {for_txn_type} tx {self.log.id(prev_txnid)}"
-            )
+                if coin_type == Coins.NAV:
+                    prev_outid = (redeem_txjs.get("vin") or [{}])[0].get("outid")
+                    redeem_outid = (redeem_txjs.get("vout") or [{}])[0].get("hash")
+                    if prev_outid and redeem_outid:
+                        self.log.debug(
+                            f"Have valid redeem tx {self.log.id(redeem_outid)} for contract {for_txn_type} tx {self.log.id(prev_outid)}"
+                        )
+
+            if coin_type != Coins.NAV:
+                redeem_txid = ci.getTxid(bytes.fromhex(redeem_txn))
+                self.log.debug(
+                    f"Have valid redeem tx {self.log.id(redeem_txid)} for contract {for_txn_type} tx {self.log.id(prev_txnid)}"
+                )
         return redeem_txn
 
     def createRefundTxn(
@@ -7276,14 +7321,17 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         addr_refund_out=None,
         tx_type=TxTypes.ITX_REFUND,
         cursor=None,
+        secret_hash: bytes | None = None,
     ):
         self.log.debug(f"createRefundTxn for coin {Coins(coin_type).name}")
         if self.coin_clients[coin_type]["connection_type"] not in ("rpc", "electrum"):
             return None
 
         ci = self.ci(coin_type)
-        if coin_type in (Coins.NAV, Coins.DCR):
+        if coin_type in (Coins.DCR,):
             prevout = ci.find_prevout_info(txn, txn_script)
+        elif coin_type == Coins.NAV:
+            prevout = nav_logic.build_nav_refund_prevout(self, bid, ci, txn, secret_hash, addr_refund_out)
         else:
             # TODO: Sign in bsx for all coins
             txjs = self.callcoinrpc(Coins.PART, "decoderawtransaction", [txn])
@@ -7304,8 +7352,12 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
 
-        privkey = self.getContractPrivkey(bid_date, bid.contract_count)
-        pubkey = ci.getPubkey(privkey)
+        if coin_type == Coins.NAV:
+            privkey = None
+            pubkey = None
+        else:
+            privkey = self.getContractPrivkey(bid_date, bid.contract_count)
+            pubkey = ci.getPubkey(privkey)
 
         lock_value = DeserialiseNum(txn_script, 64)
         sequence: int = 1
@@ -7346,7 +7398,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         options = {}
         if self.coin_clients[coin_type]["use_segwit"]:
             options["force_segwit"] = True
-        if coin_type in (Coins.NAV, Coins.DCR):
+        if coin_type == Coins.NAV:
+            refund_sig = None
+        elif coin_type in (Coins.DCR,):
             privkey_wif = ci.encodeKey(privkey)
             refund_sig = ci.getTxSignature(refund_txn, prevout, privkey_wif)
         else:
@@ -7356,7 +7410,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 "createsignaturewithkey",
                 [refund_txn, prevout, privkey_wif, "ALL", options],
             )
-        if (
+        if coin_type == Coins.NAV:
+            refund_txn = ci.signBlsct(refund_txn)
+        elif (
             coin_type in (Coins.PART, Coins.DCR)
             or self.coin_clients[coin_type]["use_segwit"]
         ):
@@ -7377,9 +7433,12 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             )
             refund_txn = ci.setTxScriptSig(bytes.fromhex(refund_txn), 0, script).hex()
 
-        if coin_type in (Coins.NAV, Coins.DCR):
+        if coin_type in (Coins.DCR,):
             # Only checks signature
             ro = ci.verifyRawTransaction(refund_txn, [prevout])
+        elif coin_type == Coins.NAV:
+            # signBlsct validates internally; NAV-specific prevout fields (outid, spending_key) are incompatible with verifyRawTransaction
+            ro = {"inputs_valid": True, "validscripts": 1}
         else:
             ro = self.callcoinrpc(
                 Coins.PART, "verifyrawtransaction", [refund_txn, [prevout]]
@@ -7404,6 +7463,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     txsize = len(refund_txn) // 2
                     self.log.debug(f"size paid, actual size {tx_vsize} {txsize}")
                     ensure(tx_vsize >= txsize, "underpaid fee")
+                elif coin_type == Coins.NAV:
+                    # signBlsct embeds fee internally; getHTLCSpendTxVSize estimate unreliable for BLSCT
+                    pass
                 elif ci.use_tx_vsize():
                     self.log.debug(
                         "vsize paid, actual vsize %d %d", tx_vsize, refund_txjs["vsize"]
@@ -7415,11 +7477,18 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     )
                     ensure(tx_vsize >= refund_txjs["size"], "underpaid fee")
 
-            refund_txid = ci.getTxid(bytes.fromhex(refund_txn))
-            prev_txid = ci.getTxid(bytes.fromhex(txn))
-            self.log.debug(
-                f"Have valid refund tx {self.log.id(refund_txid)} for contract tx {self.log.id(prev_txid)}",
-            )
+                if coin_type == Coins.NAV:
+                    prev_outid = (refund_txjs.get("vin") or [{}])[0].get("outid")
+                    refund_outid = (refund_txjs.get("vout") or [{}])[0].get("hash")
+                    if prev_outid and refund_outid:
+                        self.log.debug(f"Have valid refund tx {self.log.id(refund_outid)} for contract tx {self.log.id(prev_outid)}")
+
+            if coin_type != Coins.NAV:
+                refund_txid = ci.getTxid(bytes.fromhex(refund_txn))
+                prev_txid = ci.getTxid(bytes.fromhex(txn))
+                self.log.debug(
+                    f"Have valid refund tx {self.log.id(refund_txid)} for contract tx {self.log.id(prev_txid)}",
+                )
 
         return refund_txn
 
@@ -7454,20 +7523,23 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 )
 
                 ci_to = self.ci(offer.coin_to)
-                txn = self.createParticipateTxn(bid_id, bid, offer, participate_script)
-                txid = ci_to.publishTx(bytes.fromhex(txn))
-                self.log.debug(
-                    f"Submitted participate tx {self.logIDT(txid)} to {ci_to.coin_name()} chain for bid {self.log.id(bid_id)}"
-                )
-                bid.setPTxState(TxStates.TX_SENT)
-                self.logEvent(
-                    Concepts.BID, bid.bid_id, EventLogTypes.PTX_PUBLISHED, "", None
-                )
+                txn, nav_ptx_import_payload = self.createParticipateTxn(bid_id, bid, offer, participate_script)
+                if Coins(offer.coin_to) == Coins.NAV:
+                    nav_logic.publish_nav_ptx_and_send_ptx_import_msg(self, bid_id, bid, offer, ci_to, txn, nav_ptx_import_payload)
+                else:
+                    txid = ci_to.publishTx(bytes.fromhex(txn))
+                    self.log.debug(
+                        f"Submitted participate tx {self.logIDT(txid)} to {ci_to.coin_name()} chain for bid {self.log.id(bid_id)}"
+                    )
+                    bid.setPTxState(TxStates.TX_SENT)
+                    self.logEvent(
+                        Concepts.BID, bid.bid_id, EventLogTypes.PTX_PUBLISHED, "", None
+                    )
         else:
             bid.participate_tx = SwapTx(
                 bid_id=bid_id,
                 tx_type=TxTypes.PTX,
-                script=participate_script,
+                script=None if Coins(offer.coin_to) == Coins.NAV else participate_script,
             )
             ci = self.ci(offer.coin_to)
             if ci.watch_blocks_for_scripts() is True:
@@ -7570,6 +7642,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             self.logEvent(
                 Concepts.BID, bid.bid_id, EventLogTypes.PTX_REDEEM_PUBLISHED, "", None
             )
+            if Coins(offer.coin_to) == Coins.NAV:
+                nav_logic.send_nav_secret_reveal(self, bid_id, bid, offer)
+
             # TX_REDEEMED will be set when spend is detected
             # TODO: Wait for depth?
 
@@ -8513,20 +8588,22 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 except Exception:
                     pass
             else:
-                if ci_from.using_segwit():
-                    dest_script = ci_from.getScriptDest(bid.initiate_tx.script)
-                    addr = ci_from.encodeScriptDest(dest_script)
+                if coin_from == Coins.NAV:
+                    found = nav_logic.is_initiate_txn_on_chain(self, bid_id, bid, ci_from)
                 else:
-                    addr = ci_from.encode_p2sh(bid.initiate_tx.script)
-
-                found = ci_from.getLockTxHeight(
-                    bid.initiate_tx.txid,
-                    addr,
-                    bid.amount,
-                    bid.chain_a_height_start,
-                    find_index=True,
-                    vout=bid.initiate_tx.vout,
-                )
+                    if ci_from.using_segwit():
+                        dest_script = ci_from.getScriptDest(bid.initiate_tx.script)
+                        addr = ci_from.encodeScriptDest(dest_script)
+                    else:
+                        addr = ci_from.encode_p2sh(bid.initiate_tx.script)
+                    found = ci_from.getLockTxHeight(
+                        bid.initiate_tx.txid,
+                        addr,
+                        bid.amount,
+                        bid.chain_a_height_start,
+                        find_index=True,
+                        vout=bid.initiate_tx.vout,
+                    )
                 index = None
                 if found:
                     if "index" not in found:
@@ -8545,6 +8622,14 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     bid.initiate_tx.conf = found["depth"]
                     index = found["index"]
                     tx_height = found["height"]
+                    if coin_from == Coins.NAV:
+                        outid = found.get("outid", None)
+                        if outid:
+                            # NAV txid changes after aggregation; track by outid (stable output ID) instead
+                            bid.initiate_tx.txid = bytes.fromhex(outid)
+                            save_bid = True
+                elif coin_from == Coins.NAV and nav_logic.is_nav_itx_refunded(self, bid_id, bid, ci_from):
+                    return True
 
             if bid.initiate_tx.conf != last_initiate_txn_conf:
                 save_bid = True
@@ -8601,7 +8686,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 )
                 self.saveBid(bid_id, bid)
                 return True  # Mark bid for archiving
-        elif state == BidStates.SWAP_INITIATED:
+        elif stato == BidStates.SWAP_INITIATED:
             # Waiting for participate txn to be confirmed in 'to' chain
             if ci_to.using_segwit():
                 p2wsh = ci_to.getScriptDest(bid.participate_tx.script)
@@ -8620,56 +8705,53 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 if bid.participate_tx is None or bid.participate_tx.vout is None
                 else bid.participate_tx.vout
             )
-            found = ci_to.getLockTxHeight(
-                participate_txid,
-                addr,
-                bid.amount_to,
-                bid.chain_b_height_start,
-                find_index=True,
-                vout=participate_txvout,
-            )
-            if found:
-                participate_txid_hex: str = found.get(
-                    "txid",
-                    None if participate_txid is None else participate_txid.hex(),
-                )
-                # Double check value
-                txo_value: int = found.get("value", None)
-                if (
-                    txo_value != bid.amount_to
-                    and bid.debug_ind != DebugTypes.MAKE_INVALID_PTX
-                ):
-                    self.setBidError(
-                        bid,
-                        f"Incorrect output amount in participate txn {self.logIDT(participate_txid_hex)}: {txo_value} != {bid.amount_to}",
-                    )
-                    return True
-                index = found.get("index", participate_txvout)
-                if bid.participate_tx.conf != found["depth"]:
+            if coin_to == Coins.NAV:
+                if bid.was_sent:
+                    # Try to publish PTX if not published yet
+                    if not nav_logic.try_to_publish_nav_ptx(self, bid_id, bid, ci_to):
+                        return False
+                else:
+                    # Let offerer retrieve PTX info from bidder
+                    if not nav_logic.let_offerer_retrieve_nav_ptx(self, bid_id, bid, ci_to):
+                        return False
                     save_bid = True
-                if (
-                    bid.participate_tx.conf is None
-                    and bid.participate_tx.state != TxStates.TX_SENT
-                ):
-                    self.log.debug(
-                        f"Found bid {self.log.id(bid_id)} participate txn {self.logIDT(participate_txid_hex)} in chain {ci_to.coin_name()}."
-                    )
-                    self.addParticipateTxn(
-                        bid_id,
-                        bid,
-                        coin_to,
-                        participate_txid_hex,
-                        index,
-                        found["height"],
-                    )
-
-                    # Only update tx state if tx hasn't already been seen
+                found = nav_logic.try_to_get_nav_ptx_info_from_chain(self, bid_id, bid, ci_to, participate_txid)
+            else:
+                found = ci_to.getLockTxHeight(
+                    participate_txid,
+                    addr,
+                    bid.amount_to,
+                    bid.chain_b_height_start,
+                    find_index=True,
+                    vout=participate_txvout,
+                )
+            if found:
+                if coin_to == Coins.NAV:
+                    save_bid = nav_logic.update_ptx_outid_and_state(self, bid_id, bid, coin_to, ci_to, found)
+                else:
+                    index = found.get("index", participate_txvout)
+                    if bid.participate_tx.conf != found["depth"]:
+                        save_bid = True
                     if (
-                        bid.participate_tx.state is None
-                        or bid.participate_tx.state < TxStates.TX_SENT
+                        bid.participate_tx.conf is None
+                        and bid.participate_tx.state != TxStates.TX_SENT
                     ):
-                        bid.setPTxState(TxStates.TX_SENT)
-
+                        txid = found.get(
+                            "txid",
+                            None if participate_txid is None else participate_txid.hex(),
+                        )
+                        self.log.debug(
+                            f"Found bid {self.log.id(bid_id)} participate txn {self.log.id(txid)} in chain {ci_to.coin_name()}."
+                        )
+                        self.addParticipateTxn(
+                            bid_id, bid, coin_to, txid, index, found["height"]
+                        )
+                        # Only update tx state if tx hasn't already been seen
+                        if (
+                            bid.participate_tx.state is None
+                            or bid.participate_tx.state < TxStates.TX_SENT
+                        ):
+                            bid.setPTxState(TxStates.TX_SENT)
                 bid.participate_tx.conf = found["depth"]
                 if found["height"] > 0 and bid.participate_tx.block_height is None:
                     self.setTxBlockInfoFromHeight(
@@ -8686,9 +8768,12 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 ):
                     self.participateTxnConfirmed(bid_id, bid, offer)
                     save_bid = True
+            if coin_from == Coins.NAV:
+                if nav_logic.detect_nav_itx_refund(self, bid_id, bid, self.ci(coin_from)):
+                    save_bid = True
         elif state == BidStates.SWAP_PARTICIPATING:
-            # Waiting for initiate txn spend
-            pass
+            if coin_from == Coins.NAV or coin_to == Coins.NAV:
+                save_bid = nav_logic.handle_swap_participating(self, bid_id, bid, coin_from, coin_to)
         elif state == BidStates.BID_ERROR:
             # Wait for user input
             pass
@@ -8722,6 +8807,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 )
 
                 bid.setState(BidStates.SWAP_COMPLETED)
+                if coin_to == Coins.NAV:
+                    ci_to.clearPtxData(bid_id)
                 self.saveBid(bid_id, bid)
                 try:
                     self.notify(
@@ -8770,8 +8857,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                         f"Error trying to submit initiate refund txn: {ex}"
                     )
 
+        # TX_CONFIRMED is required in order for NAV PTX to be spendable
+        ptx_refund_states = (TxStates.TX_CONFIRMED,) if coin_to == Coins.NAV else (TxStates.TX_SENT, TxStates.TX_CONFIRMED)
         should_try_refund_ptx: bool = (
-            bid.getPTxState() in (TxStates.TX_SENT, TxStates.TX_CONFIRMED)
+            bid.getPTxState() in ptx_refund_states
             and bid.participate_txn_refund is not None
         )
         if (
@@ -10893,6 +10982,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         ensure(msg["to"] == bid.bid_addr, "Received on incorrect address")
         ensure(msg["from"] == offer.addr_from, "Sent from incorrect address")
 
+        bid.offerer_contract_pubkey = bid_accept_data.offerer_contract_pubkey
+
         coin_from = Coins(offer.coin_from)
         ci_from = self.ci(coin_from)
 
@@ -10901,6 +10992,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 accept_msg_id: bytes = self.getLinkedMessageId(
                     Concepts.BID, bid_id, MessageTypes.BID_ACCEPT
                 )
+                self.saveBid(bid_id, bid)
+                self.swaps_in_progress[bid_id] = (bid, offer)
 
                 self.log.info(
                     f"Received valid bid accept {self.logIDM(accept_msg_id)} for bid {self.log.id(bid_id)} sent to self."
@@ -10910,24 +11003,27 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         use_csv = True if offer.lock_type < TxLockTypes.ABS_LOCK_BLOCKS else False
 
-        if coin_from in (Coins.DCR,):
-            op_hash = OpCodes.OP_SHA256_DECRED
-        else:
-            op_hash = OpCodes.OP_SHA256
-        op_lock = (
-            OpCodes.OP_CHECKSEQUENCEVERIFY
-            if use_csv
-            else OpCodes.OP_CHECKLOCKTIMEVERIFY
-        )
-        script_valid, script_hash, script_pkhash1, script_lock_val, script_pkhash2 = (
-            atomic_swap_1.verifyContractScript(
-                bid_accept_data.contract_script, op_lock=op_lock, op_hash=op_hash
+        if coin_from != Coins.NAV:
+            if coin_from in (Coins.DCR,):
+                op_hash = OpCodes.OP_SHA256_DECRED
+            else:
+                op_hash = OpCodes.OP_SHA256
+            op_lock = (
+                OpCodes.OP_CHECKSEQUENCEVERIFY
+                if use_csv
+                else OpCodes.OP_CHECKLOCKTIMEVERIFY
             )
-        )
-        if not script_valid:
-            raise ValueError("Bad script")
-
-        ensure(script_pkhash1 == bid.pkhash_buyer, "pkhash_buyer mismatch")
+            script_valid, script_hash, script_pkhash1, script_lock_val, script_pkhash2 = (
+                atomic_swap_1.verifyContractScript(
+                    bid_accept_data.contract_script, op_lock=op_lock, op_hash=op_hash
+                )
+            )
+            if not script_valid:
+                raise ValueError("Bad script")
+            ensure(script_pkhash1 == bid.pkhash_buyer, "pkhash_buyer mismatch")
+        else:
+            script_lock_val = ci_from.extractHTLCLockVal(bid_accept_data.contract_script, is_nav=False)
+            ensure(script_lock_val > ci_from.getChainHeight(), "NAV script lock height not above chain height")
 
         if use_csv:
             expect_sequence = ci_from.getExpectedSequence(
@@ -10986,6 +11082,12 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         else:
             bid.pkhash_seller = script_pkhash2
 
+        # Save offerer's public key and nav redeem addr needed to create nav ptx
+        if Coins(offer.coin_to) == Coins.NAV:
+            bid.offerer_contract_pubkey = bid_accept_data.offerer_contract_pubkey
+            if bid_accept_data.nav_redeem_addr:
+                bid.nav_redeem_addr = bid_accept_data.nav_redeem_addr
+
         bid.setState(BidStates.BID_ACCEPTED)
         bid.setITxState(TxStates.TX_NONE)
 
@@ -10993,6 +11095,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         self.saveBid(bid_id, bid)
         self.swaps_in_progress[bid_id] = (bid, offer)
+
+        if Coins(offer.coin_from) == Coins.NAV:
+            nav_logic.import_nav_itx_and_rescan_nav_chain(self, bid_id, bid)
+
         self.notify(NT.BID_ACCEPTED, {"bid_id": bid_id.hex()})
 
     def receiveXmrBid(self, bid, cursor) -> None:

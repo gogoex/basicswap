@@ -264,8 +264,8 @@ class Bid(Table, StateRows):
     # Height of scriptless chain before the swap
     chain_b_height_start = Column("integer")
 
-    buyer_contract_pubkey = Column("blob")
-    seller_contract_pubkey = Column("blob")
+    bidder_contract_pubkey = Column("blob")
+    offerer_contract_pubkey = Column("blob")
     nav_redeem_addr = Column("string")
 
     reject_code = Column("integer")

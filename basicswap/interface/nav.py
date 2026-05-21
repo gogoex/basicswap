@@ -18,8 +18,10 @@ import basicswap.protocols.atomic_swap_1 as atomic_swap_1
 
 class PrevOutInfo(TypedDict):
     outid: str
-    amount: int
+    amount: float  # NAV coins from decodeblsctrawtransaction
     gamma: str
+
+class PrevOutInfoWithSpendingKey(PrevOutInfo):
     spending_key: str
 
 class PtxInfoOfferer(TypedDict):
@@ -143,26 +145,26 @@ class NAVInterface(BTCInterface):
 
     def createRedeemTxn(
         self,
-        prevout: PrevOutInfo, # amount is in Navoshis
+        prevout: PrevOutInfoWithSpendingKey, # amount is in NAV
         output_addr: str,
         output_value: int, # in Navoshis
         txn_script: bytes | None = None,
     ) -> str:
         in_params: dict[str, Any] = {
             "outid": prevout["outid"],
-            "value": int(prevout["amount"]),
+            "value": self.make_int(prevout["amount"]),  # NAV to Navoshis
             "gamma": prevout["gamma"],
             "spending_key": prevout["spending_key"],
             "scriptSig": txn_script.hex(),
         }
         out_params: dict[str, Any] = {
-            "amount": int(output_value),
+            "amount": output_value,  # amount is in Navoshis
             "address": output_addr,
         }
         params = [[in_params], [out_params]]
         txn = self.rpc("createblsctrawtransaction", params)
 
-        fee = int(prevout["amount"]) - output_value
+        fee = self.make_int(prevout["amount"], r=1) - output_value
         try:
             txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn, None, False, fee])
         except Exception as e:
@@ -174,9 +176,9 @@ class NAVInterface(BTCInterface):
 
     def createRefundTxn(
         self,
-        prevout: PrevOutInfo, # amount is in Navoshis
+        prevout: PrevOutInfoWithSpendingKey, # amount is in NAV
         output_addr: str,
-        output_value: int, # in NAV
+        output_value: int, # in Navoshis
         locktime: int,
         sequence: int,
         txn_script: bytes | None = None,
@@ -184,25 +186,23 @@ class NAVInterface(BTCInterface):
         del txn_script
         # For ABS lock types, locktime holds the CLTV value; for SEQUENCE types, sequence does.
         nav_locktime = locktime if locktime != 0 else sequence
-        navoshi_output_value = self.make_int(output_value, r=1)
-        del output_value
 
         in_params: dict[str, Any] = {
             "outid": prevout["outid"],
-            "value": int(prevout["amount"]),
+            "value": self.make_int(prevout["amount"]),  # NAV to Navoshis
             "gamma": prevout["gamma"],
             "spending_key": prevout["spending_key"],
             "scriptSig": "00", # select else path
             "sequence": nav_locktime, # CLTV requires nSequence == script locktime
         }
         out_params: dict[str, Any] = {
-            "amount": navoshi_output_value,
+            "amount": output_value,  # amount is in Navoshis
             "address": output_addr,
         }
         params = [[in_params], [out_params]]
         txn = self.rpc("createblsctrawtransaction", params)
 
-        fee = prevout["amount"] - navoshi_output_value
+        fee = self.make_int(prevout["amount"], r=1) - output_value
         txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn, None, False, fee])
 
         return txn_funded
