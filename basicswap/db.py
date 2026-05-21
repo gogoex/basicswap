@@ -327,7 +327,6 @@ class SwapTx(Table, StateRows):
 
     tx_data_funded = Column("blob")
     outid = Column("blob")
-    not_published = Column("integer")
 
     primary_key = PrimaryKeyConstraint("bid_id", "tx_type")
 

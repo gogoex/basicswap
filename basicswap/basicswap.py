@@ -8709,12 +8709,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 else bid.participate_tx.vout
             )
             if coin_to == Coins.NAV:
-                if bid.was_sent:
-                    # Try to publish PTX if not published yet
-                    if not nav_logic.try_to_publish_nav_ptx(self, bid_id, bid, ci_to):
-                        return False
-                else:
-                    # Let offerer retrieve PTX info from bidder
+                if not bid.was_sent:
                     if not nav_logic.let_offerer_retrieve_nav_ptx(self, bid_id, bid, ci_to):
                         return False
                     save_bid = True
