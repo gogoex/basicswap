@@ -15,6 +15,8 @@ from basicswap.util.address import decodeWif
 
 
 # [createRefundTxn]
+# Side: Both
+# Call Graph: Bidder: createParticipateTxn -> createRefundTxn | Offerer: acceptBid -> createRefundTxn
 def build_nav_refund_prevout(sc, bid, ci, txn, secret_hash, addr_refund_out) -> dict:
     # Decodes funded tx via decodeblsctrawtransaction, finds the HTLC output matching secret_hash,
     # returns {"outid", "amount", "gamma"}. No spending_key — caller must derive and set it.
@@ -30,6 +32,8 @@ def build_nav_refund_prevout(sc, bid, ci, txn, secret_hash, addr_refund_out) -> 
     return prevout
 
 # [createRedeemTxn]
+# Side: Both
+# Call Graph: Bidder: checkQueuedActions[REDEEM_ITX] -> redeemITx -> createRedeemTxn | Offerer: checkBidState[SWAP_INITIATED] -> participateTxnConfirmed -> createRedeemTxn
 def build_nav_redeem_prevout(sc, bid, ci, nav_txn, privkey, txn_script, is_ptx) -> dict:
     secret_hash = atomic_swap_1.extractScriptSecretHash(txn_script)
     tx_data_funded = nav_txn.tx_data_funded
@@ -56,7 +60,9 @@ def build_nav_redeem_prevout(sc, bid, ci, nav_txn, privkey, txn_script, is_ptx) 
     )
     return prevout
 
-# [Misc]
+# [checkCoinsReady]
+# Side: Both
+# Call Graph: Bidder: postBid -> checkCoinsReady | Offerer: acceptBid -> checkCoinsReady
 def confirm_wallet_minimum_balance(sc, c) -> None:
     ci = sc.ci(c)
     try:
@@ -74,6 +80,8 @@ def confirm_wallet_minimum_balance(sc, c) -> None:
         sc.log.warning(f"could not check NAV balance: {e}")
 
 # [createParticipateTxn]
+# Side: Bidder
+# Call Graph: update -> checkBidState[BID_ACCEPTED] -> initiateTxnConfirmed -> createParticipateTxn
 def create_nav_ptx(sc, bid_id, bid, offer, ci) -> tuple:
     # Extract secret hash from ITX script and use offerer's nav address as redeem address and bidder's nav address as refund address
     secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
@@ -148,6 +156,8 @@ def create_nav_ptx(sc, bid_id, bid, offer, ci) -> tuple:
     return txn_signed, nav_ptx_import_payload
 
 # [acceptBid]
+# Side: Offerer
+# Call Graph: checkQueuedActions[ACCEPT_BID] -> acceptBid
 def create_initiate_txn(sc, bid_id, bid, offer, ci_from, lock_value, secret_hash, bid_date, use_cursor):
     ensure(bid.nav_redeem_addr is not None, "NAV ITX redeem address not set; bidder must send nav_redeem_addr in BID")
     nav_addr_redeem = bid.nav_redeem_addr
@@ -161,7 +171,9 @@ def create_initiate_txn(sc, bid_id, bid, offer, ci_from, lock_value, secret_hash
 
     return txn, lock_tx_vout, nav_addr_redeem, nav_addr_refund, blinding_key
 
-# [Misc]
+# [getContractPrivkey]
+# Side: Both
+# Call Graph: various -> getContractPrivkey
 def derive_bls_key(sc, coin_type, evkey, key_path_base) -> bytes:
     BLS_GROUP_ORDER = 0x73EDA753299D7D483339D80809A1D80553BDA402FFFE5BFEFFFFFFFF00000001
     parent_path = key_path_base.rpartition("/")[0]
@@ -181,6 +193,8 @@ def derive_bls_key(sc, coin_type, evkey, key_path_base) -> bytes:
             raise ValueError("deriveBLSKey failed")
 
 # [checkBidState / SWAP_INITIATED]
+# Side: Bidder
+# Call Graph: update -> checkBidState[SWAP_INITIATED]
 def detect_nav_itx_refund(sc, bid_id, bid, ci_from) -> bool:
     # NAV ITX may be refunded while waiting for PTX confirmation.
     # BLSCT outputs have no visible address, so check via isHTLCTxnSpent (listblsctunspent).
@@ -195,6 +209,8 @@ def detect_nav_itx_refund(sc, bid_id, bid, ci_from) -> bool:
     return False
 
 # [checkBidState / SWAP_PARTICIPATING]
+# Side: Bidder
+# Call Graph: update -> checkBidState[SWAP_PARTICIPATING]
 def handle_swap_participating(sc, bid_id, bid, coin_from, coin_to) -> bool:
     # NAV HTLC outputs have no visible address; isHTLCTxnSpent polls via listblsctunspent.
     # coin_from == NAV: ITX is NAV — check if ITX is spent to mark it TX_REDEEMED.
@@ -213,6 +229,8 @@ def handle_swap_participating(sc, bid_id, bid, coin_from, coin_to) -> bool:
     return save_bid
 
 # [processBidAccept]
+# Side: Bidder
+# Call Graph: processMsg[BID_ACCEPT] -> processBidAccept
 def import_nav_itx_and_rescan_nav_chain(sc, bid_id, bid) -> None:
     ci_nav = sc.ci(Coins.NAV)
     if not ci_nav.hasPendingItxImport(bid_id):
@@ -254,6 +272,8 @@ def import_nav_itx_and_rescan_nav_chain(sc, bid_id, bid) -> None:
         sc.log.info(f"processBidAccept: persisted NAV ITX tx_data_funded for bid {sc.log.id(bid_id)}")
 
 # [checkBidState]
+# Side: Offerer
+# Call Graph: update -> checkBidState
 def is_initiate_txn_on_chain(sc, bid_id, bid, ci_from) -> dict:
     # Search by secret hash via listblsctunspent; BLSCT outputs have no visible address
     secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
@@ -267,6 +287,8 @@ def is_initiate_txn_on_chain(sc, bid_id, bid, ci_from) -> dict:
     )
 
 # [checkBidState]
+# Side: Offerer
+# Call Graph: update -> checkBidState
 def is_nav_itx_refunded(sc, bid_id, bid, ci_from) -> bool:
     # ITX was previously confirmed but UTXO gone — spent before re-detection, likely refunded
     if (
@@ -282,6 +304,8 @@ def is_nav_itx_refunded(sc, bid_id, bid, ci_from) -> bool:
     return False
 
 # [acceptBid]
+# Side: Offerer
+# Call Graph: checkQueuedActions[ACCEPT_BID] -> acceptBid
 def import_itx_and_send_payload_msg_to_bidder(sc, bid_id, bid, offer, ci_from, nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key, txn_funded, chain_height_before_submit, use_cursor):
     # Import HTLC script so wallet tracks the output after tx aggregation (txid changes when mined).
     params = {
@@ -324,7 +348,9 @@ def import_itx_and_send_payload_msg_to_bidder(sc, bid_id, bid, offer, ci_from, n
     )
     sc.log.info(f"Sent NAV_ITX_IMPORT to bidder for bid {sc.log.id(bid_id)}")
 
-# [MessageHandler]
+# [MessageHandler: NAV_ITX_IMPORT]
+# Side: Bidder
+# Call Graph: update -> processMsg[NAV_ITX_IMPORT]
 def process_nav_itx_import(sc, msg) -> None:
     """Receive NAV ITX BLSCT HTLC params from offerer (bid acceptor).
     Imports the HTLC script into the bidder's NAV wallet so getLockTxHeight
@@ -416,7 +442,9 @@ def process_nav_itx_import(sc, msg) -> None:
     sc.saveBid(bid_id, bid)
     sc.log.info(f"Persisted NAV ITX tx_data_funded to DB for bid {sc.log.id(bid_id)}")
 
-# [MessageHandler]
+# [MessageHandler: NAV_PTX_IMPORT]
+# Side: Offerer
+# Call Graph: update -> processMsg[NAV_PTX_IMPORT]
 def process_nav_ptx_import(sc, msg) -> None:
     """Receive NAV PTX BLSCT HTLC params from bidder.
     Imports the HTLC script into the offer creator's NAV wallet so
@@ -481,7 +509,9 @@ def process_nav_ptx_import(sc, msg) -> None:
     ci_nav.stashPtxOfferer(bid_id, fake_script, tx_data_funded_bytes)
     sc.log.info(f"Stashed NAV PTX script and tx_data_funded for bid {sc.log.id(bid_id)}")
 
-# [MessageHandler]
+# [MessageHandler: NAV_SECRET_REVEAL]
+# Side: Bidder
+# Call Graph: update -> processMsg[NAV_SECRET_REVEAL]
 def process_nav_secret_reveal(sc, msg) -> None:
     msg_bytes = sc.getSmsgMsgBytes(msg)
     bid_id = msg_bytes[:28]
@@ -507,6 +537,8 @@ def process_nav_secret_reveal(sc, msg) -> None:
     sc.saveBid(bid_id, bid)
 
 # [participateToBid]
+# Side: Bidder
+# Call Graph: update -> checkBidState[BID_ACCEPTED] -> initiateTxnConfirmed
 def publish_nav_ptx_and_send_ptx_import_msg(sc, bid_id, bid, offer, ci_to, txn, nav_ptx_import_payload) -> None:
     bid.participate_tx.not_published = False
     try:
@@ -522,6 +554,8 @@ def publish_nav_ptx_and_send_ptx_import_msg(sc, bid_id, bid, offer, ci_to, txn, 
         sc.logEvent(Concepts.BID, bid.bid_id, EventLogTypes.PTX_PUBLISHED, "", None)
 
 # [participateTxnConfirmed]
+# Side: Offerer
+# Call Graph: update -> checkBidState[SWAP_INITIATED] -> participateTxnConfirmed
 def send_nav_secret_reveal(sc, bid_id, bid, offer) -> None:
     # NAV uses BLSCT (private txns) so bidder can't observe the secret from the chain directly.
     # Offerer explicitly sends the secret to bidder so bidder can redeem the ITX (non-NAV side).
@@ -531,6 +565,8 @@ def send_nav_secret_reveal(sc, bid_id, bid, offer) -> None:
     sc.sendMessage(offer.addr_from, bid.bid_addr, payload_hex, sc.SMSG_SECONDS_IN_HOUR, None)
 
 # [checkBidState / SWAP_INITIATED]
+# Side: Offerer
+# Call Graph: update -> checkBidState[SWAP_INITIATED]
 def try_to_get_nav_ptx_info_from_chain(sc, bid_id, bid, ci_to, participate_txid):
     # Search by secret hash via listblsctunspent; BLSCT outputs have no visible address
     if bid.participate_tx is None or bid.participate_tx.script is None:
@@ -546,6 +582,8 @@ def try_to_get_nav_ptx_info_from_chain(sc, bid_id, bid, ci_to, participate_txid)
     )
 
 # [checkBidState / SWAP_INITIATED]
+# Side: Bidder
+# Call Graph: update -> checkBidState[SWAP_INITIATED]
 def try_to_publish_nav_ptx(sc, bid_id, bid, ci_to) -> bool:
     # if ptx info is not ready, retry in the next cycle
     if bid.was_sent and bid.participate_tx is None:
@@ -567,6 +605,8 @@ def try_to_publish_nav_ptx(sc, bid_id, bid, ci_to) -> bool:
         return False
 
 # [checkBidState / SWAP_INITIATED]
+# Side: Offerer
+# Call Graph: update -> checkBidState[SWAP_INITIATED]
 def let_offerer_retrieve_nav_ptx(sc, bid_id, bid, ci_to) -> bool:
     # Offerer's participate_tx.script is None initially (set in participateToBid else: branch).
     # Offerer gets the script via NAV_PTX_IMPORT message stashed by process_nav_ptx_import ->
@@ -580,6 +620,8 @@ def let_offerer_retrieve_nav_ptx(sc, bid_id, bid, ci_to) -> bool:
     return True
 
 # [checkBidState / SWAP_INITIATED]
+# Side: Offerer
+# Call Graph: update -> checkBidState[SWAP_INITIATED]
 def update_ptx_outid_and_state(sc, bid_id, bid, coin_to, ci_to, found) -> bool:
     save_bid = False
     if bid.participate_tx.conf != found["depth"]:
