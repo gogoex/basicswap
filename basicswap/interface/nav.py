@@ -91,7 +91,7 @@ class NAVInterface(BTCInterface):
         params = [param]
         txn = self.rpc("createblsctrawtransaction", [[], params])
 
-        txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn])
+        txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn, None, True])
         txjs = self.rpc_wallet("decodeblsctrawtransaction", [txn_funded])
 
         vout_index = None
@@ -126,7 +126,7 @@ class NAVInterface(BTCInterface):
 
         txn = self.rpc("createblsctrawtransaction", [[], params])
 
-        txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn])
+        txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn, None, True])
         return txn_funded
 
     def createRawFundedTransaction(
