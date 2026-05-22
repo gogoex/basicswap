@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Copyright (c) 2025 The Basicswap developers
+# Distributed under the MIT software license, see the accompanying
+# file LICENSE or http://www.opensource.org/licenses/mit-license.php.
+
+import unittest
+
+from coincurve.keys import PrivateKey
+
+from basicswap.basicswap_util import TxLockTypes
+from basicswap.interface.nav import NAVInterface
+from basicswap import nav_logic
+import basicswap.protocols.atomic_swap_1 as atomic_swap_1
+from tests.basicswap.util import REQUIRED_SETTINGS
+
+def ci_nav():
+    settings = {"rpcport": 0, "rpcauth": "none"}
+    settings.update(REQUIRED_SETTINGS)
+    return NAVInterface(settings, "regtest")
+
+class TestFakeHTLCScript(unittest.TestCase):
+    """Tests for createFakeNonNavHTLCScript and extractHTLCLockVal."""
+    def setUp(self):
+        self.ci = ci_nav()
+        self.secret_hash = bytes(32)
+
+    def test_roundtrip_block_heights(self):
+        for lock_value in (1, 100, 123456, 499_999_999):
+            script = self.ci.createFakeNonNavHTLCScript(self.secret_hash, lock_value)
+            assert self.ci.extractHTLCLockVal(bytes(script), is_nav=False) == lock_value, lock_value
+
+    def test_roundtrip_timestamps(self):
+        for lock_value in (500_000_000, 1_700_000_000, 1_800_000_000):
+            script = self.ci.createFakeNonNavHTLCScript(self.secret_hash, lock_value)
+            assert self.ci.extractHTLCLockVal(bytes(script), is_nav=False) == lock_value, lock_value
+
+    def test_secret_hash_preserved(self):
+        secret_hash = bytes(range(32))
+        script = self.ci.createFakeNonNavHTLCScript(secret_hash, 123456)
+        extracted = atomic_swap_1.extractScriptSecretHash(bytes(script))
+        assert extracted == secret_hash
+
+    def test_short_secret_hash_padded(self):
+        # extractScriptSecretHash must still recover correct hash after rjust padding
+        secret_hash = b'\x01' * 20
+        script = self.ci.createFakeNonNavHTLCScript(secret_hash, 100)
+        extracted = atomic_swap_1.extractScriptSecretHash(bytes(script))
+        assert extracted == secret_hash.rjust(32, b'\x00')
+
+class TestIsHTLCScript(unittest.TestCase):
+    """Tests for _isHTLCScript."""
+    def setUp(self):
+        self.ci = ci_nav()
+
+    def test_valid_script_1_byte_locktime(self):
+        # From docstring: 1-byte locktime
+        hex1 = (
+            "6382012088a820b812e53d1bd15a928803df44ab86c6a286d9a3d6625a3738f"
+            "bed32d89a4c7c178830a7b9a59a0e305eef4f756909e6fa107091fc6d2b2743"
+            "3d110d5d3c95ff987a0182bbd2e19897ee71af0466006cc2755467042c688b6"
+            "9b17530a7b9a59a0e305eef4f756909e6fa107091fc6d2b27433d110d5d3c95"
+            "ff987a0182bbd2e19897ee71af0466006cc2755468b3"
+        )
+        assert self.ci._isHTLCScript(hex1) is True
+
+    def test_valid_script_4_byte_locktime(self):
+        # From docstring: 4-byte locktime
+        hex2 = (
+            "6382012088a8206756e66c48945a6851790e94fed56b86ec9d1e05116d4d289bf"
+            "62f858389c3998830a6c43cded614e403d715cd7f28a57736214937dd811bd7e2927eed4cd"
+            "904ee8df0066923c7dc021a36e94fa6f8fa21e36703710040b17530a769dfbee940c4f72c1"
+            "29b5a315822dabda7932f5f12b8d1c56d2335544995504af3e11446a3b544cb6ec51403377"
+            "33468b3"
+        )
+        assert self.ci._isHTLCScript(hex2) is True
+
+    def test_invalid_p2pkh(self):
+        assert self.ci._isHTLCScript("76a91488ac") is False
+
+    def test_invalid_empty(self):
+        assert self.ci._isHTLCScript("") is False
+
+    def test_invalid_zeroes(self):
+        assert self.ci._isHTLCScript("00" * 100) is False
+
+    def test_case_insensitive(self):
+        hex1 = (
+            "6382012088a820b812e53d1bd15a928803df44ab86c6a286d9a3d6625a3738f"
+            "bed32d89a4c7c178830a7b9a59a0e305eef4f756909e6fa107091fc6d2b2743"
+            "3d110d5d3c95ff987a0182bbd2e19897ee71af0466006cc2755467042c688b6"
+            "9b17530a7b9a59a0e305eef4f756909e6fa107091fc6d2b27433d110d5d3c95"
+            "ff987a0182bbd2e19897ee71af0466006cc2755468b3"
+        )
+        assert self.ci._isHTLCScript(hex1.upper()) is True
+
+class TestDeriveBlindingKey(unittest.TestCase):
+    """Tests for deriveBlindingKey."""
+    def setUp(self):
+        self.ci = ci_nav()
+        self.privA = bytes.fromhex("e6b8e7c2ca3a88fe4f28591aa0f91fec340179346559e4ec430c2531aecc19aa")
+        self.privB = bytes.fromhex("b725b6359bd2b510d9d5a7bba7bdee17abbf113253f6338ea50a8f0cf45fd0d0")
+        self.pubA = PrivateKey(self.privA).public_key.format(compressed=True)
+        self.pubB = PrivateKey(self.privB).public_key.format(compressed=True)
+
+    def test_returns_nonzero_int(self):
+        key = self.ci.deriveBlindingKey(self.privA, self.pubB)
+        assert isinstance(key, int)
+        assert key > 0
+
+    def test_ecdh_commutative(self):
+        # ECDH(privA, pubB) == ECDH(privB, pubA) — same shared secret
+        key_ab = self.ci.deriveBlindingKey(self.privA, self.pubB)
+        key_ba = self.ci.deriveBlindingKey(self.privB, self.pubA)
+        assert key_ab == key_ba
+
+    def test_different_keys_different_result(self):
+        privC = bytes.fromhex("0b4c6e34c21b910f92c7985a8093de526f5f8677a112a8c672d1098139b70e0f")
+        pubC = PrivateKey(privC).public_key.format(compressed=True)
+        key_ab = self.ci.deriveBlindingKey(self.privA, self.pubB)
+        key_ac = self.ci.deriveBlindingKey(self.privA, pubC)
+        assert key_ab != key_ac
+
+    def test_deterministic(self):
+        key1 = self.ci.deriveBlindingKey(self.privA, self.pubB)
+        key2 = self.ci.deriveBlindingKey(self.privA, self.pubB)
+        assert key1 == key2
+
+class TestIsTxNonFinalError(unittest.TestCase):
+    """Tests for isTxNonFinalError."""
+    def setUp(self):
+        self.ci = ci_nav()
+
+    def test_non_final_input(self):
+        assert self.ci.isTxNonFinalError("non-final-input") is True
+        assert self.ci.isTxNonFinalError("sendrawtransaction: non-final-input (code 64)") is True
+
+    def test_bad_input_unknown(self):
+        assert self.ci.isTxNonFinalError("bad-input-unknown") is True
+        assert self.ci.isTxNonFinalError("bad-inputs-unknown") is True
+
+    def test_code_25(self):
+        assert self.ci.isTxNonFinalError("{'code': 25, 'message': 'Missing inputs'}") is True
+
+    def test_unrelated_errors(self):
+        assert self.ci.isTxNonFinalError("insufficient fee") is False
+        assert self.ci.isTxNonFinalError("") is False
+        assert self.ci.isTxNonFinalError("transaction already in mempool") is False
+
+class TestGetHTLCSpendTxVSize(unittest.TestCase):
+    def test_returns_expected_size(self):
+        ci = ci_nav()
+        assert ci.getHTLCSpendTxVSize(redeem=True) == 1336
+        assert ci.getHTLCSpendTxVSize(redeem=False) == 1336
+
+class TestGetSeedHash(unittest.TestCase):
+    def test_returns_seed_unchanged(self):
+        ci = ci_nav()
+        seed = bytes(range(32))
+        assert ci.getSeedHash(seed) == seed
+
+class TestPendingItxImportState(unittest.TestCase):
+    """Tests for stash/pop/has/clear of _pending_nav_itx_imports."""
+    def setUp(self):
+        self.ci = ci_nav()
+        self.bid_id = b'\x01' * 32
+
+    def test_stash_and_has(self):
+        assert self.ci.hasPendingItxImport(self.bid_id) is False
+        self.ci.stashPendingItxImport(self.bid_id, {"foo": "bar"})
+        assert self.ci.hasPendingItxImport(self.bid_id) is True
+
+    def test_pop_returns_data(self):
+        self.ci.stashPendingItxImport(self.bid_id, {"foo": "bar"})
+        data = self.ci.popPendingItxImport(self.bid_id)
+        assert data == {"foo": "bar"}
+        assert self.ci.hasPendingItxImport(self.bid_id) is False
+
+    def test_pop_missing_returns_none(self):
+        assert self.ci.popPendingItxImport(self.bid_id) is None
+
+    def test_clear_removes_entry(self):
+        self.ci.stashPendingItxImport(self.bid_id, {"foo": "bar"})
+        self.ci.clearPendingItxImport(self.bid_id)
+        assert self.ci.hasPendingItxImport(self.bid_id) is False
+
+    def test_clear_missing_is_noop(self):
+        self.ci.clearPendingItxImport(self.bid_id)  # should not raise
+
+    def test_multiple_bids_isolated(self):
+        bid_id2 = b'\x02' * 32
+        self.ci.stashPendingItxImport(self.bid_id, {"n": 1})
+        self.ci.stashPendingItxImport(bid_id2, {"n": 2})
+        assert self.ci.popPendingItxImport(self.bid_id) == {"n": 1}
+        assert self.ci.hasPendingItxImport(bid_id2) is True
+
+class TestPtxOffererState(unittest.TestCase):
+    """Tests for stashPtxOfferer, getPtxInfoOfferer, clearPtxData."""
+    def setUp(self):
+        self.ci = ci_nav()
+        self.bid_id = b'\xab' * 32
+        self.script = bytearray(b'\x01\x02\x03')
+        self.tx_data = b'\x04\x05\x06'
+
+    def test_stash_and_get(self):
+        assert self.ci.getPtxInfoOfferer(self.bid_id) is None
+        self.ci.stashPtxOfferer(self.bid_id, self.script, self.tx_data)
+        info = self.ci.getPtxInfoOfferer(self.bid_id)
+        assert info is not None
+        assert info["script"] == self.script
+        assert info["tx_data_funded"] == self.tx_data
+
+    def test_clear_removes_entry(self):
+        self.ci.stashPtxOfferer(self.bid_id, self.script, self.tx_data)
+        self.ci.clearPtxData(self.bid_id)
+        assert self.ci.getPtxInfoOfferer(self.bid_id) is None
+
+    def test_clear_missing_is_noop(self):
+        self.ci.clearPtxData(self.bid_id)  # should not raise
+
+    def test_multiple_bids_isolated(self):
+        bid_id2 = b'\xcd' * 32
+        self.ci.stashPtxOfferer(self.bid_id, self.script, self.tx_data)
+        self.ci.stashPtxOfferer(bid_id2, bytearray(b'\xff'), b'\x00')
+        self.ci.clearPtxData(self.bid_id)
+        assert self.ci.getPtxInfoOfferer(self.bid_id) is None
+        assert self.ci.getPtxInfoOfferer(bid_id2) is not None
+
+class TestNormalizeLocKType(unittest.TestCase):
+    """Tests for nav_logic.normalize_lock_type."""
+    def test_sequence_lock_time_maps_to_abs(self):
+        assert nav_logic.normalize_lock_type(TxLockTypes.SEQUENCE_LOCK_TIME) == TxLockTypes.ABS_LOCK_TIME
+
+    def test_sequence_lock_blocks_maps_to_abs(self):
+        assert nav_logic.normalize_lock_type(TxLockTypes.SEQUENCE_LOCK_BLOCKS) == TxLockTypes.ABS_LOCK_BLOCKS
+
+    def test_abs_lock_types_unchanged(self):
+        assert nav_logic.normalize_lock_type(TxLockTypes.ABS_LOCK_TIME) == TxLockTypes.ABS_LOCK_TIME
+        assert nav_logic.normalize_lock_type(TxLockTypes.ABS_LOCK_BLOCKS) == TxLockTypes.ABS_LOCK_BLOCKS
+
+if __name__ == "__main__":
+    unittest.main()
