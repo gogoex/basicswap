@@ -7,7 +7,7 @@
 import datetime as dt
 
 import basicswap.protocols.atomic_swap_1 as atomic_swap_1
-from basicswap.basicswap_util import ActionTypes, BidStates, EventLogTypes, MessageTypes, TxStates, TxTypes
+from basicswap.basicswap_util import ActionTypes, BidStates, EventLogTypes, MessageTypes, TxLockTypes, TxStates, TxTypes
 from basicswap.chainparams import Coins
 from basicswap.db import Concepts
 from basicswap.util import b2i, ensure
@@ -82,7 +82,7 @@ def confirm_wallet_minimum_balance(sc, c) -> None:
 # [createParticipateTxn]
 # Side: Bidder
 # Call Graph: update -> checkBidState[BID_ACCEPTED] -> initiateTxnConfirmed -> createParticipateTxn
-def create_nav_ptx(sc, bid_id, bid, offer, ci) -> tuple:
+def create_nav_ptx(sc, bid_id, bid, offer, ci, lock_value, participate_script) -> tuple:
     # Extract secret hash from ITX script and use offerer's nav address as redeem address and bidder's nav address as refund address
     secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
     nav_addr_redeem = bid.nav_redeem_addr
@@ -92,16 +92,14 @@ def create_nav_ptx(sc, bid_id, bid, offer, ci) -> tuple:
     # Derive blinding key via ECDH (bidder_privkey, offerer_pubkey)
     bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
     bidder_privkey = sc.getContractPrivkey(bid_date, bid.contract_count)
-    lock_value = ci.getParticipateLockValue(offer)
     blinding_key = ci.deriveBlindingKey(bidder_privkey, bid.offerer_contract_pubkey)
 
     # Create funded PTX and PTX refund txn
     txn_funded, vout_index = ci.createInitiateTxn(
         nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key, bid.amount_to,
     )
-    participate_script = ci.createFakeNonNavHTLCScript(secret_hash, lock_value)
     refund_txn = sc.createRefundTxn(
-        Coins.NAV, txn_funded, offer, bid, participate_script,
+        Coins.NAV, txn_funded, offer, bid, None,
         addr_refund_out=nav_addr_refund, secret_hash=secret_hash, tx_type=TxTypes.PTX_REFUND,
     )
     bid.participate_txn_refund = bytes.fromhex(refund_txn)
@@ -347,6 +345,17 @@ def import_itx_and_send_payload_msg_to_bidder(sc, bid_id, bid, offer, ci_from, n
         payload_version=offer.smsg_payload_version,
     )
     sc.log.info(f"Sent NAV_ITX_IMPORT to bidder for bid {sc.log.id(bid_id)}")
+
+# [acceptBid / deriveParticipateScript]
+# Side: Both
+# Call Graph: acceptBid -> normalize_lock_type | deriveParticipateScript -> normalize_lock_type
+def normalize_lock_type(lock_type: int) -> int:
+    # NAV BLSCT HTLC only supports CLTV; map relative lock types to absolute equivalent
+    if lock_type == TxLockTypes.SEQUENCE_LOCK_TIME:
+        return TxLockTypes.ABS_LOCK_TIME
+    if lock_type == TxLockTypes.SEQUENCE_LOCK_BLOCKS:
+        return TxLockTypes.ABS_LOCK_BLOCKS
+    return lock_type
 
 # [MessageHandler: NAV_ITX_IMPORT]
 # Side: Bidder

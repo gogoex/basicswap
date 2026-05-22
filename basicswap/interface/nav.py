@@ -54,19 +54,19 @@ class NAVInterface(BTCInterface):
     def clearPtxData(self, bid_id: bytes) -> None:
         self._ptx_info_offerer.pop(bid_id, None)
 
-    def createFakeNonNavHTLCScript(self, secret_hash: bytearray, locktime: int) -> bytearray:
+    def createFakeNonNavHTLCScript(self, secret_hash: bytearray, lock_value: int) -> bytearray:
         """
         Create a non-NAV HTLC script with zeroed-out fields,
-        excluding the secret hash and locktime.
+        excluding the secret hash and lock_value.
         """
         padded_secret_hash = secret_hash.rjust(32, b'\x00')
-        locktime_bytes = locktime.to_bytes(max(1, (locktime.bit_length() + 7) // 8), byteorder='little')
+        lock_value_bytes = lock_value.to_bytes(max(1, (lock_value.bit_length() + 7) // 8), byteorder='little')
         fake_script = (
             b'\x00' * 7 +
             padded_secret_hash +
             b'\x00' * 25 +
-            bytes([len(locktime_bytes)]) +
-            locktime_bytes
+            bytes([len(lock_value_bytes)]) +
+            lock_value_bytes
         )
         return bytearray(fake_script)
 
@@ -75,7 +75,7 @@ class NAVInterface(BTCInterface):
         address_a: str,
         address_b: str,
         hash: bytes,
-        locktime: int,
+        lock_value: int,
         blinding_key: int,
         amount: int,
     ) -> tuple[str, int]:
@@ -85,7 +85,7 @@ class NAVInterface(BTCInterface):
             "address_b": address_b,
             "blinding_key": f"{blinding_key:064x}",
             "hash": hash.hex(),
-            "locktime": locktime,
+            "locktime": lock_value,
             "type": "atomic_swap",
         }
         params = [param]
@@ -331,14 +331,6 @@ class NAVInterface(BTCInterface):
             ],
         )
         return address
-
-    def getParticipateLockValue(self, offer) -> int:
-        itx_lock_time_half_in_blocks = offer.lock_value // 2 // 30  # half of ITX duration; 30s NAV block time
-        if offer.isSet("lock_blocks"):
-            nav_blocks = min(offer.lock_blocks, itx_lock_time_half_in_blocks)
-        else:
-            nav_blocks = itx_lock_time_half_in_blocks
-        return self.getChainHeight() + nav_blocks
 
     def getPrevOutInfoFromOffChainTxn(self, txn_hex: str, secret_hash: bytes) -> PrevOutInfo:
         txjs = self.rpc_wallet("decodeblsctrawtransaction", [txn_hex])

@@ -207,7 +207,6 @@ class Offer(Table, StateRows):
     message_nets = Column("string")
 
     # Local fields
-    lock_blocks = Column("integer")
     auto_accept_bids = Column("bool")
     was_sent = Column("bool")  # Sent by node
     withdraw_to_addr = Column(
