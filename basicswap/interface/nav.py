@@ -96,7 +96,7 @@ class NAVInterface(BTCInterface):
 
         vout_index = None
         for index, output in enumerate(txjs["outputs"]):
-            if self.isHTLCScript(output["scriptPubKey"]):
+            if self._isHTLCScript(output["scriptPubKey"]):
                 vout_index = index
                 break
         if vout_index is None:
@@ -294,11 +294,11 @@ class NAVInterface(BTCInterface):
 
         secret_hash = dest_address.lower()
         try:
-            utxos = self.listBlsctUnspent()
+            utxos = self._listBlsctUnspent()
             self._log.debug(f"getNavLockTxHeight: {len(utxos)} UTxOs from listblsctunspent, seeking secret_hash={secret_hash}")
             for utxo in utxos:
                 utxo_spk = utxo.get("scriptPubKey", "").lower()
-                if not self.isHTLCScript(utxo_spk):
+                if not self._isHTLCScript(utxo_spk):
                     continue
                 spk_bytes = bytes.fromhex(utxo_spk)
                 spk_secret_hash = atomic_swap_1.extractScriptSecretHash(spk_bytes).hex()
@@ -337,7 +337,7 @@ class NAVInterface(BTCInterface):
         self._log.debug(f"getPrevOutInfoFromOffChainTxn: secret_hash={secret_hash.hex()}")
         for output in txjs.get("outputs", []):
             spk = output.get("scriptPubKey", "")
-            if not self.isHTLCScript(spk):
+            if not self._isHTLCScript(spk):
                 continue
             spk_secret_hash = atomic_swap_1.extractScriptSecretHash(bytes.fromhex(spk))
             self._log.debug(f"found HTLC script: spk_secret_hash={spk_secret_hash.hex()}")
@@ -363,9 +363,6 @@ class NAVInterface(BTCInterface):
 
     def getSeedHash(self, seed: bytes) -> bytes:
         return seed
-
-    def getSpendingPubKey(self) -> bytes:
-        return bytes(96)
 
     def getWalletInfo(self):
         rv = super().getWalletInfo()
@@ -425,7 +422,7 @@ class NAVInterface(BTCInterface):
                  self._log.debug(f"setblsctseed failed: {e}")
                  raise (e)
 
-    def isHTLCScript(self, script: str) -> bool:
+    def _isHTLCScript(self, script: str) -> bool:
         """
         Determines if a script is a Navio HTLC script.
 
@@ -451,16 +448,16 @@ class NAVInterface(BTCInterface):
         >>> hex += "9b17530a7b9a59a0e305eef4f756909e6fa107091fc6d2b27433d110d5d3c95"
         >>> hex += "ff987a0182bbd2e19897ee71af0466006cc2755468b3"
         >>> nav = NAVInterface()
-        >>> nav.isHTLCScript(hex)
+        >>> nav._isHTLCScript(hex)
         True
         >>> hex = "6382012088a8206756e66c48945a6851790e94fed56b86ec9d1e05116d4d289bf"
         >>> hex += "62f858389c3998830a6c43cded614e403d715cd7f28a57736214937dd811bd7e2927eed4cd"
         >>> hex += "904ee8df0066923c7dc021a36e94fa6f8fa21e36703710040b17530a769dfbee940c4f72c1"
         >>> hex += "29b5a315822dabda7932f5f12b8d1c56d2335544995504af3e11446a3b544cb6ec51403377"
         >>> hex += "33468b3"
-        >>> nav.isHTLCScript(hex)
+        >>> nav._isHTLCScript(hex)
         True
-        >>> nav.isHTLCScript("76a91488ac")
+        >>> nav._isHTLCScript("76a91488ac")
         False
         """
         script = script.lower()
@@ -527,10 +524,10 @@ class NAVInterface(BTCInterface):
         locktime = self.extractHTLCLockVal(script, is_nav=False)
         self._log.debug(f"isHTLCTxnSpent: secret_hash={secret_hash.hex()} {locktime=} script={script.hex()}")
         try:
-            utxos = self.listBlsctUnspent()
+            utxos = self._listBlsctUnspent()
             for utxo in utxos:
                 spk = utxo.get("scriptPubKey", "")
-                if not self.isHTLCScript(spk):
+                if not self._isHTLCScript(spk):
                     continue
                 spk_bytes = bytes.fromhex(spk)
                 spk_secret_hash = atomic_swap_1.extractScriptSecretHash(spk_bytes)
@@ -567,7 +564,7 @@ class NAVInterface(BTCInterface):
         # bad-inputs-unknown: refund input not in UTXO set; PTX still in mempool (BLSCT outputs unspendable until confirmed)
         return "non-final-input" in err_str or "bad-input-unknown" in err_str or "bad-inputs-unknown" in err_str or "'code': 25" in err_str
 
-    def listBlsctUnspent(self) -> list:
+    def _listBlsctUnspent(self) -> list:
         return self.rpc_wallet("listblsctunspent", [0])
 
     def popPendingItxImport(self, bid_id: bytes) -> dict | None:
