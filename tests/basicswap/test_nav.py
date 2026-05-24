@@ -226,17 +226,5 @@ class TestPtxOffererState(unittest.TestCase):
         assert self.ci.getPtxInfoOfferer(self.bid_id) is None
         assert self.ci.getPtxInfoOfferer(bid_id2) is not None
 
-class TestNormalizeLocKType(unittest.TestCase):
-    """Tests for nav_logic.normalize_lock_type."""
-    def test_sequence_lock_time_maps_to_abs(self):
-        assert nav_logic.normalize_lock_type(TxLockTypes.SEQUENCE_LOCK_TIME) == TxLockTypes.ABS_LOCK_TIME
-
-    def test_sequence_lock_blocks_maps_to_abs(self):
-        assert nav_logic.normalize_lock_type(TxLockTypes.SEQUENCE_LOCK_BLOCKS) == TxLockTypes.ABS_LOCK_BLOCKS
-
-    def test_abs_lock_types_unchanged(self):
-        assert nav_logic.normalize_lock_type(TxLockTypes.ABS_LOCK_TIME) == TxLockTypes.ABS_LOCK_TIME
-        assert nav_logic.normalize_lock_type(TxLockTypes.ABS_LOCK_BLOCKS) == TxLockTypes.ABS_LOCK_BLOCKS
-
 if __name__ == "__main__":
     unittest.main()

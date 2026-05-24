@@ -75,9 +75,10 @@ class NAVInterface(BTCInterface):
         address_a: str,
         address_b: str,
         hash: bytes,
-        lock_value: int,
+        locktime: int,
         blinding_key: int,
         amount: int,
+        timelock_opcode: str,
     ) -> tuple[str, int]:
         param: dict[str, Any] = {
             "amount": amount,
@@ -85,7 +86,8 @@ class NAVInterface(BTCInterface):
             "address_b": address_b,
             "blinding_key": f"{blinding_key:064x}",
             "hash": hash.hex(),
-            "locktime": lock_value,
+            "locktime": locktime,
+            "timelock_opcode": timelock_opcode,
             "type": "atomic_swap",
         }
         params = [param]
@@ -483,6 +485,15 @@ class NAVInterface(BTCInterface):
             push_size = int(script[pos:pos + 2], 16)
             return skip(push_size + 1)
 
+        def consume_timelock_op() -> bool:
+            nonlocal pos
+            if pos + 2 > len(script):
+                return False
+            if script[pos:pos + 2] in ("b1", "b2"):
+                pos += 2
+                return True
+            return False
+
         def all_consumed() -> bool:
             return pos == len(script)
 
@@ -505,10 +516,10 @@ class NAVInterface(BTCInterface):
             consume("67") and
             # 1-4 byte locktime
             consume_locktime() and
-            # b1 (OP_CHECKLOCKTIMEVERIFY)
-            # 75 (OP_DROP
+            # b1 (OP_CHECKLOCKTIMEVERIFY) or b2 (OP_CHECKSEQUENCEVERIFY)
+            # 75 (OP_DROP)
             # 30 (Data Length 48)
-            consume("b17530") and
+            consume_timelock_op() and consume("7530") and
             # address_b
             skip(48) and
             # 68 (OP_ENDIF)
