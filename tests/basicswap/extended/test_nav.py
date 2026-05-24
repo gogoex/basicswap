@@ -95,8 +95,8 @@ def prepareNavDataDir(
     return node_dir
 
 
-def run_test_success_path(self, coin_from: Coins, coin_to: Coins):
-    logging.info(f"---------- Test {coin_from.name} to {coin_to.name}")
+def run_test_success_path_lock_type(self, coin_from: Coins, coin_to: Coins, lock_type: TxLockTypes, lock_value: int):
+    logging.info(f"---------- Test {coin_from.name} to {coin_to.name} lock_type={lock_type.name} lock_value={lock_value}")
 
     node_from = 0
     node_to = 1
@@ -111,7 +111,8 @@ def run_test_success_path(self, coin_from: Coins, coin_to: Coins):
     rate_swap = ci_to.make_int(random.uniform(0.2, 10.0), r=1)
 
     offer_id = swap_clients[node_from].postOffer(
-        coin_from, coin_to, amt_swap, rate_swap, amt_swap, SwapTypes.SELLER_FIRST
+        coin_from, coin_to, amt_swap, rate_swap, amt_swap, SwapTypes.SELLER_FIRST,
+        lock_type, lock_value,
     )
 
     wait_for_offer(test_delay_event, swap_clients[node_to], offer_id)
@@ -141,6 +142,13 @@ def run_test_success_path(self, coin_from: Coins, coin_to: Coins):
     js_1 = read_json_api(1800 + node_to)
     assert js_0["num_swapping"] == 0 and js_0["num_watched_outputs"] == 0
     assert js_1["num_swapping"] == 0 and js_1["num_watched_outputs"] == 0
+
+
+def run_test_success_path(self, coin_from: Coins, coin_to: Coins):
+    run_test_success_path_lock_type(
+        self, coin_from, coin_to,
+        TxLockTypes.SEQUENCE_LOCK_TIME, 48 * 60 * 60,
+    )
 
 
 def run_test_bad_ptx(self, coin_from: Coins, coin_to: Coins):
@@ -440,6 +448,18 @@ class Test(BaseTest):
 
     def test_07_nav_part_itx_refund(self):
         run_test_itx_refund(self, Coins.NAV, Coins.PART)
+
+    def test_08_part_nav_sequence_lock_blocks(self):
+        run_test_success_path_lock_type(self, Coins.PART, Coins.NAV, TxLockTypes.SEQUENCE_LOCK_BLOCKS, 10)
+
+    def test_09_nav_part_sequence_lock_time(self):
+        run_test_success_path_lock_type(self, Coins.NAV, Coins.PART, TxLockTypes.SEQUENCE_LOCK_TIME, 48 * 60 * 60)
+
+    def test_10_part_nav_abs_lock_blocks(self):
+        run_test_success_path_lock_type(self, Coins.PART, Coins.NAV, TxLockTypes.ABS_LOCK_BLOCKS, 10)
+
+    def test_11_nav_part_abs_lock_time(self):
+        run_test_success_path_lock_type(self, Coins.NAV, Coins.PART, TxLockTypes.ABS_LOCK_TIME, 48 * 60 * 60)
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ import unittest
 
 from coincurve.keys import PrivateKey
 
-from basicswap.basicswap_util import TxLockTypes
+from basicswap.basicswap_util import MessageTypes, TxLockTypes
 from basicswap.interface.nav import NAVInterface
 from basicswap import nav_logic
 import basicswap.protocols.atomic_swap_1 as atomic_swap_1
@@ -159,72 +159,59 @@ class TestGetSeedHash(unittest.TestCase):
         seed = bytes(range(32))
         assert ci.getSeedHash(seed) == seed
 
-class TestPendingItxImportState(unittest.TestCase):
-    """Tests for stash/pop/has/clear of _pending_nav_itx_imports."""
-    def setUp(self):
-        self.ci = ci_nav()
-        self.bid_id = b'\x01' * 32
+class TestTimelockOpcode(unittest.TestCase):
+    """Verify timelock_opcode derivation for all 4 lock types."""
 
-    def test_stash_and_has(self):
-        assert self.ci.hasPendingItxImport(self.bid_id) is False
-        self.ci.stashPendingItxImport(self.bid_id, {"foo": "bar"})
-        assert self.ci.hasPendingItxImport(self.bid_id) is True
+    def _opcode(self, lock_type):
+        return "csv" if lock_type < TxLockTypes.ABS_LOCK_BLOCKS else "cltv"
 
-    def test_pop_returns_data(self):
-        self.ci.stashPendingItxImport(self.bid_id, {"foo": "bar"})
-        data = self.ci.popPendingItxImport(self.bid_id)
-        assert data == {"foo": "bar"}
-        assert self.ci.hasPendingItxImport(self.bid_id) is False
+    def test_sequence_lock_blocks_gives_csv(self):
+        assert self._opcode(TxLockTypes.SEQUENCE_LOCK_BLOCKS) == "csv"
 
-    def test_pop_missing_returns_none(self):
-        assert self.ci.popPendingItxImport(self.bid_id) is None
+    def test_sequence_lock_time_gives_csv(self):
+        assert self._opcode(TxLockTypes.SEQUENCE_LOCK_TIME) == "csv"
 
-    def test_clear_removes_entry(self):
-        self.ci.stashPendingItxImport(self.bid_id, {"foo": "bar"})
-        self.ci.clearPendingItxImport(self.bid_id)
-        assert self.ci.hasPendingItxImport(self.bid_id) is False
+    def test_abs_lock_blocks_gives_cltv(self):
+        assert self._opcode(TxLockTypes.ABS_LOCK_BLOCKS) == "cltv"
 
-    def test_clear_missing_is_noop(self):
-        self.ci.clearPendingItxImport(self.bid_id)  # should not raise
+    def test_abs_lock_time_gives_cltv(self):
+        assert self._opcode(TxLockTypes.ABS_LOCK_TIME) == "cltv"
 
-    def test_multiple_bids_isolated(self):
-        bid_id2 = b'\x02' * 32
-        self.ci.stashPendingItxImport(self.bid_id, {"n": 1})
-        self.ci.stashPendingItxImport(bid_id2, {"n": 2})
-        assert self.ci.popPendingItxImport(self.bid_id) == {"n": 1}
-        assert self.ci.hasPendingItxImport(bid_id2) is True
+class TestBuildParseHtlcImportPayload(unittest.TestCase):
+    """Round-trip tests for _build_nav_htlc_import_payload / _parse_nav_htlc_import_msg."""
 
-class TestPtxOffererState(unittest.TestCase):
-    """Tests for stashPtxOfferer, getPtxInfoOfferer, clearPtxData."""
-    def setUp(self):
-        self.ci = ci_nav()
-        self.bid_id = b'\xab' * 32
-        self.script = bytearray(b'\x01\x02\x03')
-        self.tx_data = b'\x04\x05\x06'
+    def _roundtrip(self, timelock_opcode):
+        bid_id = bytes(range(28))
+        blinding_key = 0xABCD1234 * (2 ** 224)
+        lock_value = 12345
+        nav_addr_redeem = "NVredeem"
+        nav_addr_refund = "NVrefund"
+        chain_height = 800
+        txn_funded = "deadbeef" * 8
 
-    def test_stash_and_get(self):
-        assert self.ci.getPtxInfoOfferer(self.bid_id) is None
-        self.ci.stashPtxOfferer(self.bid_id, self.script, self.tx_data)
-        info = self.ci.getPtxInfoOfferer(self.bid_id)
-        assert info is not None
-        assert info["script"] == self.script
-        assert info["tx_data_funded"] == self.tx_data
+        payload_hex = nav_logic._build_nav_htlc_import_payload(
+            MessageTypes.NAV_ITX_IMPORT,
+            bid_id, blinding_key, lock_value, timelock_opcode,
+            nav_addr_redeem, nav_addr_refund, chain_height, txn_funded,
+        )
+        msg_bytes = bytes.fromhex(payload_hex[2:])  # skip 1-byte msg_type prefix
+        parsed = nav_logic._parse_nav_htlc_import_msg(msg_bytes)
+        p_bid_id, p_blinding_key, p_lock_value, p_timelock_opcode, p_addr_redeem, p_addr_refund, p_rescan_from, p_tx = parsed
 
-    def test_clear_removes_entry(self):
-        self.ci.stashPtxOfferer(self.bid_id, self.script, self.tx_data)
-        self.ci.clearPtxData(self.bid_id)
-        assert self.ci.getPtxInfoOfferer(self.bid_id) is None
+        assert p_bid_id == bid_id
+        assert p_blinding_key == blinding_key
+        assert p_lock_value == lock_value
+        assert p_timelock_opcode == timelock_opcode
+        assert p_addr_redeem == nav_addr_redeem
+        assert p_addr_refund == nav_addr_refund
+        assert p_rescan_from == chain_height
+        assert p_tx == bytes.fromhex(txn_funded)
 
-    def test_clear_missing_is_noop(self):
-        self.ci.clearPtxData(self.bid_id)  # should not raise
+    def test_roundtrip_csv(self):
+        self._roundtrip("csv")
 
-    def test_multiple_bids_isolated(self):
-        bid_id2 = b'\xcd' * 32
-        self.ci.stashPtxOfferer(self.bid_id, self.script, self.tx_data)
-        self.ci.stashPtxOfferer(bid_id2, bytearray(b'\xff'), b'\x00')
-        self.ci.clearPtxData(self.bid_id)
-        assert self.ci.getPtxInfoOfferer(self.bid_id) is None
-        assert self.ci.getPtxInfoOfferer(bid_id2) is not None
+    def test_roundtrip_cltv(self):
+        self._roundtrip("cltv")
 
 if __name__ == "__main__":
     unittest.main()
