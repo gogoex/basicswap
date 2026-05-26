@@ -369,16 +369,22 @@ def is_nav_itx_refunded(sc, bid_id, bid, ci_from) -> bool:
 # [checkBidState / SWAP_INITIATED]
 # Side: Offerer
 # Call Graph: update -> checkBidState[SWAP_INITIATED]
-def let_offerer_retrieve_nav_ptx(sc, bid_id, bid, ci_to) -> bool:
-    # Offerer's participate_tx.script is None initially (set in participateToBid else: branch).
-    # Offerer gets the script via NAV_PTX_IMPORT message stashed by process_nav_ptx_import ->
-    # getPtxInfoOfferer retrieves it here.
-    ptx_info = ci_to.getPtxInfoOfferer(bid_id)
-    if ptx_info is None:
+def import_nav_ptx_and_apply_to_bid(sc, bid_id, bid) -> bool:
+    if bid.nav_ptx_import_info is None:
         return False
-    bid.participate_tx.script = ptx_info["script"]
-    bid.participate_tx.tx_data_funded = ptx_info["tx_data_funded"]
-    sc.log.info(f"Applied stashed NAV PTX script for bid {sc.log.id(bid_id)}")
+    _, blinding_key, lock_value, timelock_opcode, nav_addr_redeem, nav_addr_refund, rescan_from, tx_data_funded_bytes = _parse_nav_htlc_import_msg(bid.nav_ptx_import_info)
+    secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
+    params = _build_import_blsct_script_params(
+        nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, timelock_opcode, blinding_key,
+    )
+    ci_nav = sc.ci(Coins.NAV)
+    ci_nav.importBlsctScript(params, rescan_from)
+    sc.log.info(f"Imported NAV PTX HTLC script for bid {sc.log.id(bid_id)}")
+    ensure(tx_data_funded_bytes is not None, "NAV_PTX_IMPORT missing tx_data_funded")
+    fake_script = ci_nav.createFakeNonNavHTLCScript(secret_hash, lock_value)
+    bid.participate_tx.script = fake_script
+    bid.participate_tx.tx_data_funded = tx_data_funded_bytes
+    bid.nav_ptx_import_info = None
     return True
 
 # [MessageHandler: NAV_ITX_IMPORT]
@@ -389,6 +395,8 @@ def process_nav_itx_import(sc, msg) -> None:
     bid_id = msg_bytes[:28]
     bid = sc.getBid(bid_id)
     bid.nav_itx_import_info = msg_bytes
+    # NAV_ITX_IMPORT may arrive after BID_ACCEPT; if initiate_tx already set, process immediately
+    # rather than waiting for the next processBidAccept drain.
     if bid.initiate_tx is not None:
         import_nav_itx_and_rescan_nav_chain(sc, bid_id, bid)
     sc.saveBid(bid_id, bid)
@@ -397,43 +405,11 @@ def process_nav_itx_import(sc, msg) -> None:
 # Side: Offerer
 # Call Graph: update -> processMsg[NAV_PTX_IMPORT]
 def process_nav_ptx_import(sc, msg) -> None:
-    """Receive NAV PTX BLSCT HTLC params from bidder.
-    Imports the HTLC script into the offer creator's NAV wallet so
-    getLockTxHeight can find the PTX via listblsctunspent."""
-    sc.log.debug(f"processNavPtxImport from {msg['from']}")
-    bid_id, blinding_key, lock_value, timelock_opcode, nav_addr_redeem, nav_addr_refund, rescan_from, tx_data_funded_bytes = _parse_nav_htlc_import_msg(sc.getSmsgMsgBytes(msg))
-
-    sc.log.info(f"processNavPtxImport: bid {sc.log.id(bid_id)}, {nav_addr_redeem=}, {lock_value=}")
-    if bid_id not in sc.swaps_in_progress:
-        sc.log.warning(f"processNavPtxImport: bid {sc.log.id(bid_id)} not in progress")
-        return
-
-    bid = sc.swaps_in_progress[bid_id][0]
-    if not bid.was_received:
-        sc.log.warning(f"processNavPtxImport: bid {sc.log.id(bid_id)} not received bid")
-        return
-
-    if bid.initiate_tx is None:
-        sc.log.warning(f"processNavPtxImport: bid {sc.log.id(bid_id)} has no initiate_tx yet")
-        return
-
-    secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
-    params = _build_import_blsct_script_params(
-        nav_addr_redeem,
-        nav_addr_refund,
-        secret_hash,
-        lock_value,
-        timelock_opcode,
-        blinding_key,
-    )
-    ci_nav = sc.ci(Coins.NAV)
-    ci_nav.importBlsctScript(params, rescan_from)
-    sc.log.info(f"Imported NAV PTX HTLC script for bid {sc.log.id(bid_id)}")
-    ensure(tx_data_funded_bytes is not None, "NAV_PTX_IMPORT missing tx_data_funded")
-
-    fake_script = ci_nav.createFakeNonNavHTLCScript(secret_hash, lock_value)
-    ci_nav.stashPtxOfferer(bid_id, fake_script, tx_data_funded_bytes)
-    sc.log.info(f"Stashed NAV PTX script and tx_data_funded for bid {sc.log.id(bid_id)}")
+    msg_bytes = sc.getSmsgMsgBytes(msg)
+    bid_id = msg_bytes[:28]
+    bid = sc.getBid(bid_id)
+    bid.nav_ptx_import_info = msg_bytes
+    sc.saveBid(bid_id, bid)
 
 # [MessageHandler: NAV_SECRET_REVEAL]
 # Side: Bidder

@@ -24,18 +24,10 @@ class PrevOutInfo(TypedDict):
 class PrevOutInfoWithSpendingKey(PrevOutInfo):
     spending_key: str
 
-class PtxInfoOfferer(TypedDict):
-    script: bytearray
-    tx_data_funded: bytes
-
 class NAVInterface(BTCInterface):
     @staticmethod
     def coin_type() -> Coins: # type: ignore[override]
         return Coins.NAV
-
-    def __init__(self, coin_settings, network, swap_client=None):
-        super(NAVInterface, self).__init__(coin_settings, network, swap_client)
-        self._ptx_info_offerer: dict = {}
 
     def checkExpectedSeed(self, expect_seedid: str) -> bool:
         RPC_WALLET_BLANK = -37
@@ -46,9 +38,6 @@ class NAVInterface(BTCInterface):
                 return False
             raise
         return expect_seedid == actual_seedid
-
-    def clearPtxData(self, bid_id: bytes) -> None:
-        self._ptx_info_offerer.pop(bid_id, None)
 
     def createFakeNonNavHTLCScript(self, secret_hash: bytearray, lock_value: int) -> bytearray:
         """
@@ -356,9 +345,6 @@ class NAVInterface(BTCInterface):
         proof_hex = result["proof"]
         return ("blsct_balance_proof", proof_hex, [])
 
-    def getPtxInfoOfferer(self, bid_id: bytes) -> PtxInfoOfferer | None:
-        return self._ptx_info_offerer.get(bid_id, None)
-
     def getSeedHash(self, seed: bytes) -> bytes:
         return seed
 
@@ -584,8 +570,6 @@ class NAVInterface(BTCInterface):
         signed_txn = self.rpc("signblsctrawtransaction", [txn])
         return signed_txn
 
-    def stashPtxOfferer(self, bid_id: bytes, script: bytearray, tx_data_funded: bytes) -> None:
-        self._ptx_info_offerer[bid_id] = PtxInfoOfferer(script=script, tx_data_funded=tx_data_funded)
 
     def verifyProofOfFunds(self, address, signature, utxos, extra_commit_bytes):
         additional_commitment = extra_commit_bytes.hex()

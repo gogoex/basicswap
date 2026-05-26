@@ -7510,8 +7510,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 f"{self.logIDB(bid_id)}: Abandoning for testing: {bid.debug_ind}, {DebugTypes(bid.debug_ind).name}."
             )
             bid.setState(BidStates.BID_ABANDONED)
-            if Coins(offer.coin_to) == Coins.NAV:
-                self.ci(Coins.NAV).clearPtxData(bid_id)
             self.logBidEvent(
                 bid.bid_id,
                 EventLogTypes.DEBUG_TWEAK_APPLIED,
@@ -8696,7 +8694,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 )
                 self.saveBid(bid_id, bid)
                 return True  # Mark bid for archiving
-        elif stato == BidStates.SWAP_INITIATED:
+        elif state == BidStates.SWAP_INITIATED:
             # Waiting for participate txn to be confirmed in 'to' chain
             if ci_to.using_segwit():
                 p2wsh = ci_to.getScriptDest(bid.participate_tx.script)
@@ -8717,7 +8715,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             )
             if coin_to == Coins.NAV:
                 if not bid.was_sent:
-                    if not nav_logic.let_offerer_retrieve_nav_ptx(self, bid_id, bid, ci_to):
+                    if not nav_logic.import_nav_ptx_and_apply_to_bid(self, bid_id, bid):
                         return False
                     save_bid = True
                 found = nav_logic.try_to_get_nav_ptx_info_from_chain(self, bid_id, bid, ci_to, participate_txid)
@@ -8812,8 +8810,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 )
 
                 bid.setState(BidStates.SWAP_COMPLETED)
-                if coin_to == Coins.NAV:
-                    ci_to.clearPtxData(bid_id)
                 self.saveBid(bid_id, bid)
                 try:
                     self.notify(
@@ -9126,8 +9122,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                             f"{self.logIDB(bid_id)}: Abandoning for testing: {bid.debug_ind}, {DebugTypes(bid.debug_ind).name}."
                         )
                         bid.setState(BidStates.BID_ABANDONED)
-                        if coin_to == Coins.NAV:
-                            ci_to.clearPtxData(bid_id)
                         self.logBidEvent(
                             bid.bid_id,
                             EventLogTypes.DEBUG_TWEAK_APPLIED,
@@ -9210,8 +9204,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
                     if not was_received:
                         bid.setState(BidStates.SWAP_COMPLETED)
-                        if coin_to == Coins.NAV:
-                            ci_to.clearPtxData(bid_id)
                         try:
                             self.notify(
                                 NT.SWAP_COMPLETED,

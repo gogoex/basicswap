@@ -267,6 +267,7 @@ class Bid(Table, StateRows):
     offerer_contract_pubkey = Column("blob")
     nav_redeem_addr = Column("string")
     nav_itx_import_info = Column("blob")
+    nav_ptx_import_info = Column("blob")
 
     reject_code = Column("integer")
 
