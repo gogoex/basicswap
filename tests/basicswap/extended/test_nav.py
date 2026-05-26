@@ -50,7 +50,6 @@ NAVIO_CLI = os.getenv("NAVIO_CLI", "navio-cli" + cfg.bin_suffix)
 NAV_BASE_PORT = 44832
 NAV_BASE_RPC_PORT = 45832
 
-
 def prepareNavDataDir(
     datadir, node_id, conf_file, dir_prefix, base_p2p_port, base_rpc_port, num_nodes=3
 ):
@@ -93,7 +92,6 @@ def prepareNavDataDir(
                 continue
             fp.write("addnode=127.0.0.1:{}\n".format(base_p2p_port + i))
     return node_dir
-
 
 def run_test_success_path_lock_type(self, coin_from: Coins, coin_to: Coins, lock_type: TxLockTypes, lock_value: int):
     logging.info(f"---------- Test {coin_from.name} to {coin_to.name} lock_type={lock_type.name} lock_value={lock_value}")
@@ -143,13 +141,63 @@ def run_test_success_path_lock_type(self, coin_from: Coins, coin_to: Coins, lock
     assert js_0["num_swapping"] == 0 and js_0["num_watched_outputs"] == 0
     assert js_1["num_swapping"] == 0 and js_1["num_watched_outputs"] == 0
 
-
 def run_test_success_path(self, coin_from: Coins, coin_to: Coins):
     run_test_success_path_lock_type(
         self, coin_from, coin_to,
         TxLockTypes.SEQUENCE_LOCK_TIME, 48 * 60 * 60,
     )
 
+def run_test_ptx_refund(self, coin_from: Coins, coin_to: Coins):
+    logging.info(f"---------- Test ptx refund {coin_from.name} to {coin_to.name}")
+
+    node_from = 0
+    node_to = 1
+    swap_clients = self.swap_clients
+    ci_from = swap_clients[node_from].ci(coin_from)
+    ci_to = swap_clients[node_to].ci(coin_to)
+
+    self.prepare_balance(coin_to, 100.0, 1801, 1800)
+    self.prepare_balance(coin_from, 100.0, 1800, 1801)
+
+    amt_swap = ci_from.make_int(random.uniform(1.1, 10.0), r=1)
+    rate_swap = ci_to.make_int(random.uniform(0.1, 2.0), r=1)
+
+    offer_id = swap_clients[node_from].postOffer(
+        coin_from,
+        coin_to,
+        amt_swap,
+        rate_swap,
+        amt_swap,
+        SwapTypes.SELLER_FIRST,
+        TxLockTypes.SEQUENCE_LOCK_BLOCKS,
+        5,
+        auto_accept_bids=True,
+    )
+
+    wait_for_offer(test_delay_event, swap_clients[node_to], offer_id)
+    offer = swap_clients[node_to].getOffer(offer_id)
+    bid_id = swap_clients[node_to].postBid(offer_id, offer.amount_from)
+
+    wait_for_bid(test_delay_event, swap_clients[node_from], bid_id)
+    swap_clients[node_from].setBidDebugInd(bid_id, DebugTypes.DONT_SPEND_PTX)
+
+    wait_for_bid(
+        test_delay_event,
+        swap_clients[node_from],
+        bid_id,
+        BidStates.BID_ABANDONED,
+        wait_for=300,
+    )
+
+    js_0_bid = read_json_api(1800 + node_from, "bids/{}".format(bid_id.hex()))
+    js_1_bid = read_json_api(1800 + node_to, "bids/{}".format(bid_id.hex()))
+    assert js_0_bid["itx_state"] == "Refunded"
+    assert js_1_bid["ptx_state"] == "Refunded"
+
+    js_0 = read_json_api(1800 + node_from)
+    js_1 = read_json_api(1800 + node_to)
+    assert js_0["num_swapping"] == 0 and js_0["num_watched_outputs"] == 0
+    assert js_1["num_swapping"] == 0 and js_1["num_watched_outputs"] == 0
 
 def run_test_bad_ptx(self, coin_from: Coins, coin_to: Coins):
     logging.info(f"---------- Test bad ptx {coin_from.name} to {coin_to.name}")
@@ -208,7 +256,6 @@ def run_test_bad_ptx(self, coin_from: Coins, coin_to: Coins):
     js_1 = read_json_api(1800 + node_to)
     assert js_0["num_swapping"] == 0 and js_0["num_watched_outputs"] == 0
     assert js_1["num_swapping"] == 0 and js_1["num_watched_outputs"] == 0
-
 
 def run_test_itx_refund(self, coin_from: Coins, coin_to: Coins):
     logging.info(f"---------- Test itx refund {coin_from.name} to {coin_to.name}")
@@ -274,7 +321,6 @@ def run_test_itx_refund(self, coin_from: Coins, coin_to: Coins):
         BidStates.SWAP_COMPLETED,
         wait_for=60,
     )
-
 
 class Test(BaseTest):
     __test__ = True
@@ -461,6 +507,11 @@ class Test(BaseTest):
     def test_11_nav_part_abs_lock_time(self):
         run_test_success_path_lock_type(self, Coins.NAV, Coins.PART, TxLockTypes.ABS_LOCK_TIME, 48 * 60 * 60)
 
+    def test_12_part_nav_ptx_refund(self):
+        run_test_ptx_refund(self, Coins.PART, Coins.NAV)
+
+    def test_13_nav_part_ptx_refund(self):
+        run_test_ptx_refund(self, Coins.NAV, Coins.PART)
 
 if __name__ == "__main__":
     unittest.main()

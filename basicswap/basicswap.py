@@ -7636,6 +7636,19 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             self.log.debug(f"Not confirming PTX for debugging {self.log.id(bid_id)}")
             return
 
+        if bid.debug_ind == DebugTypes.DONT_SPEND_PTX:
+            self.log.debug(
+                f"{self.logIDB(bid_id)}: Abandoning for testing: {bid.debug_ind}, {DebugTypes(bid.debug_ind).name}."
+            )
+            bid.setState(BidStates.BID_ABANDONED)
+            self.logBidEvent(
+                bid.bid_id,
+                EventLogTypes.DEBUG_TWEAK_APPLIED,
+                f"ind {bid.debug_ind}",
+                None,
+            )
+            return
+
         bid.setState(BidStates.SWAP_PARTICIPATING)
         bid.setPTxState(TxStates.TX_CONFIRMED)
 

@@ -213,5 +213,27 @@ class TestBuildParseHtlcImportPayload(unittest.TestCase):
     def test_roundtrip_cltv(self):
         self._roundtrip("cltv")
 
+class TestBuildImportBlsctScriptParams(unittest.TestCase):
+    def test_fields_and_types(self):
+        secret_hash = bytes(range(32))
+        blinding_key = 0xABCD1234
+        params = nav_logic._build_import_blsct_script_params(
+            "NVredeem", "NVrefund", secret_hash, 12345, "csv", blinding_key,
+        )
+        assert params["type"] == "atomic_swap"
+        assert params["address_a"] == "NVredeem"
+        assert params["address_b"] == "NVrefund"
+        assert params["hash"] == secret_hash.hex()
+        assert params["locktime"] == 12345
+        assert params["timelock_opcode"] == "csv"
+        assert params["blinding_key"] == f"{blinding_key:064x}"
+
+    def test_blinding_key_zero_padded(self):
+        params = nav_logic._build_import_blsct_script_params(
+            "a", "b", bytes(32), 1, "cltv", 1,
+        )
+        assert len(params["blinding_key"]) == 64
+        assert params["blinding_key"] == "0" * 63 + "1"
+
 if __name__ == "__main__":
     unittest.main()

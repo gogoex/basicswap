@@ -252,6 +252,7 @@ class DebugTypes(IntEnum):
     BID_DONT_SPEND_COIN_A_LOCK = auto()
     DONT_SEND_COIN_B_LOCK = auto()
     DONT_RELEASE_COIN_A_LOCK = auto()
+    DONT_SPEND_PTX = auto()
 
 
 class NotificationTypes(IntEnum):
