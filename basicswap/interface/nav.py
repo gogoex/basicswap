@@ -36,7 +36,6 @@ class NAVInterface(BTCInterface):
     def __init__(self, coin_settings, network, swap_client=None):
         super(NAVInterface, self).__init__(coin_settings, network, swap_client)
         self._ptx_info_offerer: dict = {}
-        self._pending_nav_itx_imports: dict = {}  # bid_id -> parsed NAV_ITX_IMPORT data (timing stash)
 
     def checkExpectedSeed(self, expect_seedid: str) -> bool:
         RPC_WALLET_BLANK = -37
@@ -47,9 +46,6 @@ class NAVInterface(BTCInterface):
                 return False
             raise
         return expect_seedid == actual_seedid
-
-    def clearPendingItxImport(self, bid_id: bytes) -> None:
-        self._pending_nav_itx_imports.pop(bid_id, None)
 
     def clearPtxData(self, bid_id: bytes) -> None:
         self._ptx_info_offerer.pop(bid_id, None)
@@ -396,9 +392,6 @@ class NAVInterface(BTCInterface):
         """
         return self.rpc("getblsctseed")
 
-    def hasPendingItxImport(self, bid_id: bytes) -> bool:
-        return bid_id in self._pending_nav_itx_imports
-
     def importBlsctScript(self, params: dict, rescan_from: None | int) -> dict:
         if rescan_from is not None:
             try:
@@ -578,9 +571,6 @@ class NAVInterface(BTCInterface):
     def _listBlsctUnspent(self) -> list:
         return self.rpc_wallet("listblsctunspent", [0])
 
-    def popPendingItxImport(self, bid_id: bytes) -> dict | None:
-        return self._pending_nav_itx_imports.pop(bid_id, None)
-
     def publishTx(self, tx: bytes):
         try:
             res = self.rpc("sendrawtransaction", [tx.hex()])
@@ -593,9 +583,6 @@ class NAVInterface(BTCInterface):
     def signBlsct(self, txn):
         signed_txn = self.rpc("signblsctrawtransaction", [txn])
         return signed_txn
-
-    def stashPendingItxImport(self, bid_id: bytes, data: dict) -> None:
-        self._pending_nav_itx_imports[bid_id] = data
 
     def stashPtxOfferer(self, bid_id: bytes, script: bytearray, tx_data_funded: bytes) -> None:
         self._ptx_info_offerer[bid_id] = PtxInfoOfferer(script=script, tx_data_funded=tx_data_funded)

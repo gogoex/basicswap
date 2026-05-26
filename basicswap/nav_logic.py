@@ -301,48 +301,38 @@ def import_itx_and_send_payload_msg_to_bidder(sc, bid_id, bid, offer, ci_from, n
     )
     sc.log.info(f"Sent NAV_ITX_IMPORT to bidder for bid {sc.log.id(bid_id)}")
 
-# [processBidAccept]
+# [processBidAccept / process_nav_itx_import]
 # Side: Bidder
 # Call Graph: processMsg[BID_ACCEPT] -> processBidAccept
+#             processMsg[NAV_ITX_IMPORT] -> process_nav_itx_import
 def import_nav_itx_and_rescan_nav_chain(sc, bid_id, bid) -> None:
-    ci_nav = sc.ci(Coins.NAV)
-    if not ci_nav.hasPendingItxImport(bid_id):
+    if bid.nav_itx_import_info is None:
         return
-
-    # Import NAV Itx
-    sc.log.info(f"processBidAccept: draining stashed NAV_ITX_IMPORT for bid {sc.log.id(bid_id)}")
-    stash = ci_nav.popPendingItxImport(bid_id)
+    _, blinding_key, lock_value, timelock_opcode, nav_addr_redeem, nav_addr_refund, rescan_from, tx_data_funded_bytes = _parse_nav_htlc_import_msg(bid.nav_itx_import_info)
     secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
     params = _build_import_blsct_script_params(
-        stash["nav_addr_redeem"],
-        stash["nav_addr_refund"],
-        secret_hash,
-        stash["lock_value"],
-        stash.get("timelock_opcode", "cltv"),
-        stash["blinding_key"],
+        nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, timelock_opcode, blinding_key,
     )
     ci_nav = sc.ci(Coins.NAV)
-    rescan_from = stash["rescan_from"]
     ci_nav.importBlsctScript(params, rescan_from)
-    sc.log.info(f"processBidAccept: imported NAV ITX HTLC script for bid {sc.log.id(bid_id)}")
-
-    bid.initiate_tx.script = ci_nav.createFakeNonNavHTLCScript(secret_hash, stash["lock_value"])
-
-    # Rescan the nav chain from the height where the Itx is first confirmed
-    try:
-        chain_height = ci_nav.rpc("getblockchaininfo")["blocks"]
-        rescan_from = min(rescan_from, chain_height)
-    except Exception as e:
-        sc.log.warning(f"processBidAccept: could not clamp rescan_from: {e}")
-    sc.log.info(f"processBidAccept: rescanning from height {rescan_from} to find ITX UTXO")
-    ci_nav.rpc_wallet("rescanblockchain", [rescan_from])
-    sc.log.info(f"processBidAccept: rescan complete")
-
-    tx_data_funded_bytes = stash["tx_data_funded_bytes"]
-    if tx_data_funded_bytes is not None:
-        bid.initiate_tx.tx_data_funded = tx_data_funded_bytes
-        sc.saveBid(bid_id, bid)
-        sc.log.info(f"processBidAccept: persisted NAV ITX tx_data_funded for bid {sc.log.id(bid_id)}")
+    sc.log.info(f"Imported NAV ITX HTLC script for bid {sc.log.id(bid_id)}")
+    # Update initiate_tx.script to fake BLSCT format (with absolute locktime) so
+    # isHTLCTxnSpent can match the on-chain UTxO locktime correctly.
+    bid.initiate_tx.script = ci_nav.createFakeNonNavHTLCScript(secret_hash, lock_value)
+    # ITx is already on-chain when bidder imports; rescanblockchain finds the existing UTXO
+    if rescan_from is not None:
+        try:
+            chain_height = ci_nav.rpc("getblockchaininfo")["blocks"]
+            rescan_from = min(rescan_from, chain_height)
+        except Exception as e:
+            sc.log.warning(f"import_nav_itx_and_rescan_nav_chain: could not clamp rescan_from: {e}")
+        sc.log.info(f"Rescanning from height {rescan_from} to find ITX UTXO")
+        ci_nav.rpc_wallet("rescanblockchain", [rescan_from])
+        sc.log.info(f"Rescan complete")
+    ensure(tx_data_funded_bytes is not None, "NAV_ITX_IMPORT missing tx_data_funded")
+    ensure(bid.initiate_tx.tx_data_funded is None, "NAV ITX tx_data_funded already set")
+    bid.initiate_tx.tx_data_funded = tx_data_funded_bytes
+    bid.nav_itx_import_info = None
 
 # [checkBidState]
 # Side: Offerer
@@ -395,71 +385,13 @@ def let_offerer_retrieve_nav_ptx(sc, bid_id, bid, ci_to) -> bool:
 # Side: Bidder
 # Call Graph: update -> processMsg[NAV_ITX_IMPORT]
 def process_nav_itx_import(sc, msg) -> None:
-    """Receive NAV ITX BLSCT HTLC params from offerer (bid acceptor).
-    Imports the HTLC script into the bidder's NAV wallet so getLockTxHeight
-    can find the ITX via listblsctunspent, and stores tx_data_funded for
-    createRedeemTxn to use when the bidder redeems the NAV ITx."""
-    sc.log.debug(f"processNavItxImport from {msg['from']}")
-    bid_id, blinding_key, lock_value, timelock_opcode, nav_addr_redeem, nav_addr_refund, rescan_from, tx_data_funded_bytes = _parse_nav_htlc_import_msg(sc.getSmsgMsgBytes(msg))
-
-    sc.log.info(f"processNavItxImport: bid {sc.log.id(bid_id)}, {nav_addr_redeem=}, {lock_value=}")
-    if bid_id not in sc.swaps_in_progress:
-        # BID_ACCEPT may arrive slightly after NAV_ITX_IMPORT (SMSG ordering not guaranteed).
-        # Stash the data; processBidAccept will drain it once the bid is in-progress.
-        sc.log.warning(f"processNavItxImport: bid {sc.log.id(bid_id)} not yet in progress — stashing for later")
-        sc.ci(Coins.NAV).stashPendingItxImport(bid_id, {
-            "nav_addr_redeem": nav_addr_redeem,
-            "nav_addr_refund": nav_addr_refund,
-            "blinding_key": blinding_key,
-            "lock_value": lock_value,
-            "timelock_opcode": timelock_opcode,
-            "rescan_from": rescan_from,
-            "tx_data_funded_bytes": tx_data_funded_bytes,
-        })
-        return
-
-    bid = sc.swaps_in_progress[bid_id][0]
-    if bid.was_received:
-        sc.log.warning(f"processNavItxImport: bid {sc.log.id(bid_id)} was received (expected sent bid)")
-        return
-
-    if bid.initiate_tx is None:
-        sc.log.warning(f"processNavItxImport: bid {sc.log.id(bid_id)} has no initiate_tx yet")
-        return
-
-    secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
-    params = _build_import_blsct_script_params(
-        nav_addr_redeem,
-        nav_addr_refund,
-        secret_hash,
-        lock_value,
-        timelock_opcode,
-        blinding_key,
-    )
-    ci_nav = sc.ci(Coins.NAV)
-    ci_nav.importBlsctScript(params, rescan_from)
-    sc.log.info(f"Imported NAV ITX HTLC script for bid {sc.log.id(bid_id)}")
-
-    # Update initiate_tx.script to fake BLSCT format (with absolute locktime) so
-    # isHTLCTxnSpent can match the on-chain UTxO locktime correctly.
-    bid.initiate_tx.script = ci_nav.createFakeNonNavHTLCScript(secret_hash, lock_value)
-
-    # ITx is already on-chain when bidder imports; rescanblockchain finds the existing UTXO
-    if rescan_from is not None:
-        try:
-            chain_height = ci_nav.rpc("getblockchaininfo")["blocks"]
-            rescan_from = min(rescan_from, chain_height)
-        except Exception as e:
-            sc.log.warning(f"processNavItxImport: could not clamp rescan_from: {e}")
-        sc.log.info(f"processNavItxImport: rescanning from height {rescan_from} to find ITX UTXO")
-        ci_nav.rpc_wallet("rescanblockchain", [rescan_from])
-        sc.log.info(f"processNavItxImport: rescan complete")
-
-    ensure(tx_data_funded_bytes is not None, "NAV_ITX_IMPORT missing tx_data_funded")
-    ensure(bid.initiate_tx.tx_data_funded is None, "NAV ITX tx_data_funded already set")
-    bid.initiate_tx.tx_data_funded = tx_data_funded_bytes
+    msg_bytes = sc.getSmsgMsgBytes(msg)
+    bid_id = msg_bytes[:28]
+    bid = sc.getBid(bid_id)
+    bid.nav_itx_import_info = msg_bytes
+    if bid.initiate_tx is not None:
+        import_nav_itx_and_rescan_nav_chain(sc, bid_id, bid)
     sc.saveBid(bid_id, bid)
-    sc.log.info(f"Persisted NAV ITX tx_data_funded to DB for bid {sc.log.id(bid_id)}")
 
 # [MessageHandler: NAV_PTX_IMPORT]
 # Side: Offerer

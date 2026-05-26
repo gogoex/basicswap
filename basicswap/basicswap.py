@@ -7512,8 +7512,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             bid.setState(BidStates.BID_ABANDONED)
             if Coins(offer.coin_to) == Coins.NAV:
                 self.ci(Coins.NAV).clearPtxData(bid_id)
-            if Coins(offer.coin_from) == Coins.NAV:
-                self.ci(Coins.NAV).clearPendingItxImport(bid_id)
             self.logBidEvent(
                 bid.bid_id,
                 EventLogTypes.DEBUG_TWEAK_APPLIED,
@@ -8816,8 +8814,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 bid.setState(BidStates.SWAP_COMPLETED)
                 if coin_to == Coins.NAV:
                     ci_to.clearPtxData(bid_id)
-                if coin_from == Coins.NAV:
-                    ci_from.clearPendingItxImport(bid_id)
                 self.saveBid(bid_id, bid)
                 try:
                     self.notify(
@@ -9132,8 +9128,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                         bid.setState(BidStates.BID_ABANDONED)
                         if coin_to == Coins.NAV:
                             ci_to.clearPtxData(bid_id)
-                        if coin_from == Coins.NAV:
-                            ci_from.clearPendingItxImport(bid_id)
                         self.logBidEvent(
                             bid.bid_id,
                             EventLogTypes.DEBUG_TWEAK_APPLIED,
@@ -9218,8 +9212,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                         bid.setState(BidStates.SWAP_COMPLETED)
                         if coin_to == Coins.NAV:
                             ci_to.clearPtxData(bid_id)
-                        if coin_from == Coins.NAV:
-                            ci_from.clearPendingItxImport(bid_id)
                         try:
                             self.notify(
                                 NT.SWAP_COMPLETED,
@@ -11104,6 +11096,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             if bid_accept_data.nav_redeem_addr:
                 bid.nav_redeem_addr = bid_accept_data.nav_redeem_addr
 
+        if Coins(offer.coin_from) == Coins.NAV:
+            nav_logic.import_nav_itx_and_rescan_nav_chain(self, bid_id, bid)
+
         bid.setState(BidStates.BID_ACCEPTED)
         bid.setITxState(TxStates.TX_NONE)
 
@@ -11111,9 +11106,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         self.saveBid(bid_id, bid)
         self.swaps_in_progress[bid_id] = (bid, offer)
-
-        if Coins(offer.coin_from) == Coins.NAV:
-            nav_logic.import_nav_itx_and_rescan_nav_chain(self, bid_id, bid)
 
         self.notify(NT.BID_ACCEPTED, {"bid_id": bid_id.hex()})
 
