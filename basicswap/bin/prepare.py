@@ -1045,6 +1045,7 @@ def prepareCore(coin, version_data, settings, data_dir, extra_opts={}):
                     bin_arch = "x86_64-apple-darwin"
                 else:
                     raise ValueError(f"Unsupported macOS arch for {coin}: {machine}")
+            version = version.replace("-", "") # TODO NAV tempoarry measure. drop this after file name format fix
             release_filename = f"{coin}-{version}-{bin_arch}.{FILE_EXT}"
             base_url = "https://releases.nav.io"
             release_url = f"{base_url}/{release_filename}"
