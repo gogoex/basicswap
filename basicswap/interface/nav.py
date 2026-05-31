@@ -225,6 +225,15 @@ class NAVInterface(BTCInterface):
             locktime_bytes = script[65:65 + push_size]
         return int.from_bytes(locktime_bytes, byteorder='little')
 
+    # TODO NAV remove this after verificationprogress issue is fixed
+    def getBlockchainInfo(self):
+        rv = self.rpc("getblockchaininfo")
+        blocks = rv.get("blocks", 0)
+        headers = rv.get("headers", 0)
+        if headers > 0 and blocks < headers:
+            rv["verificationprogress"] = blocks / headers
+        return rv
+
     # Workaround: naviod crashes with getblock verbosity=2 (MoneyRange assertion). Remove once naviod fixes.
     def getBlockWithTxns(self, block_hash: str):
         # naviod crashes with getblock with verbosity 2 (MoneyRange bug),
