@@ -233,10 +233,11 @@ class BaseApp(DBMethods):
 
     def getChainDatadirPath(self, coin) -> str:
         datadir = self.coin_clients[coin]["datadir"]
-        testnet_name = (
+        chain = self.coin_clients[coin].get("chain_override", self.chain)  # TODO NAV revert upon making pr
+        testnet_name = (  # TODO NAV revert upon making pr
             ""
-            if self.chain == "mainnet"
-            else chainparams[coin][self.chain].get("name", self.chain)
+            if chain == "mainnet"  # TODO NAV revert upon making pr
+            else chainparams[coin][chain].get("name", chain)  # TODO NAV revert upon making pr
         )
         return os.path.join(datadir, testnet_name)
 

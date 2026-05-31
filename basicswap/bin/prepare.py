@@ -750,6 +750,8 @@ def extractCore(coin, version_data, settings, bin_dir, release_path, extra_opts=
             return "{}-{}_nousb/bin/{}".format(dir_name, version + version_tag, b)
         elif coin == "decred":
             return "{}-{}-v{}/{}".format(dir_name, extra_opts["arch_name"], version, b)
+        elif coin == "navio":  # TODO NAV drop after filename format fix
+            return "{}-{}/bin/{}".format(dir_name, (version + version_tag).replace("-", ""), b)
         else:
             return "{}-{}/bin/{}".format(dir_name, version + version_tag, b)
 
@@ -1045,7 +1047,7 @@ def prepareCore(coin, version_data, settings, data_dir, extra_opts={}):
                     bin_arch = "x86_64-apple-darwin"
                 else:
                     raise ValueError(f"Unsupported macOS arch for {coin}: {machine}")
-            version = version.replace("-", "") # TODO NAV tempoarry measure. drop this after file name format fix
+            version = version.replace("-", "") # TODO NAV temporary measure. drop this after file name format fix
             release_filename = f"{coin}-{version}-{bin_arch}.{FILE_EXT}"
             base_url = "https://releases.nav.io"
             release_url = f"{base_url}/{release_filename}"
@@ -1067,6 +1069,7 @@ def prepareCore(coin, version_data, settings, data_dir, extra_opts={}):
         if coin not in (
             "firo",
             "bitcoincash",
+            "navio",  # TODO NAV re-enable once public key is published on releases.nav.io
         ):
             assert_sig_url = assert_url + (".asc" if use_guix else ".sig")
             assert_sig_filename = "{}-{}-{}-build-{}.assert.sig".format(
@@ -1152,6 +1155,9 @@ def prepareCore(coin, version_data, settings, data_dir, extra_opts={}):
             importPubkey(gpg, pubkey_filename, pubkeyurls)
             with open(assert_path, "rb") as fp:
                 verified = gpg.verify_file(fp)
+    elif coin == "navio":  # TODO NAV re-enable verification once public key is published on releases.nav.io
+        logger.warning("Skipping signature verification for navio (public key unavailable).")
+        verified = None
     elif coin in ("navcoin"):
         with open(assert_sig_path, "rb") as fp:
             verified = gpg.verify_file(fp)
@@ -1176,7 +1182,8 @@ def prepareCore(coin, version_data, settings, data_dir, extra_opts={}):
             with open(assert_sig_path, "rb") as fp:
                 verified = gpg.verify_file(fp, assert_path)
 
-    ensureValidSignatureBy(verified, signing_key_name)
+    if coin != "navio":  # TODO NAV re-enable once public key is published on releases.nav.io
+        ensureValidSignatureBy(verified, signing_key_name)
     extractCore(coin, version_data, settings, bin_dir, release_path, extra_opts)
 
 
