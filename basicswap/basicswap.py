@@ -10939,6 +10939,18 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         if len(bid_data.proof_address) > 0:
             bid.proof_address = bid_data.proof_address
 
+        coin_from = Coins(offer.coin_from)
+        if coin_from == Coins.NAV:
+            # NAV ITX: bidder sends bidder_contract_pubkey so offerer can derive blinding key for refund.
+            # Bidder also sends nav_redeem_addr (address_a) so offerer can create the NAV ITX HTLC.
+            bid.bidder_contract_pubkey = bid_data.bidder_contract_pubkey
+            if bid_data.nav_redeem_addr:
+                bid.nav_redeem_addr = bid_data.nav_redeem_addr
+
+        if coin_to == Coins.NAV:
+            # NAV PTX: bidder sends bidder_contract_pubkey so offerer can derive blinding key for PTX redeem.
+            bid.bidder_contract_pubkey = bid_data.bidder_contract_pubkey
+
         bid.setState(BidStates.BID_RECEIVED)
         try:
             cursor = self.openDB()
