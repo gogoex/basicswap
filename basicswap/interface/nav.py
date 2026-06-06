@@ -63,7 +63,6 @@ class NAVInterface(BTCInterface):
         locktime: int,
         blinding_key: int,
         amount: int,
-        timelock_opcode: str,
     ) -> tuple[str, int]:
         param: dict[str, Any] = {
             "amount": amount,
@@ -72,7 +71,7 @@ class NAVInterface(BTCInterface):
             "blinding_key": f"{blinding_key:064x}",
             "hash": hash.hex(),
             "locktime": locktime,
-            "timelock_opcode": timelock_opcode,
+            "timelock_opcode": "cltv",
             "type": "atomic_swap",
         }
         params = [param]
