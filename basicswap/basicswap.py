@@ -4004,7 +4004,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         )
         self.log.debug(f"Ensuring wallet can send {balance_msg}.")
         try:
-            if ci.interface_type() in self.scriptless_coins:
+            if ci.interface_type() in self.scriptless_coins or ci.coin_type() == Coins.NAV:
                 ci.ensureFunds(ensure_balance + estimated_fee)
             elif ci.useBackend():
                 self.log.debug(
