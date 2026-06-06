@@ -8715,13 +8715,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 return True  # Mark bid for archiving
         elif state == BidStates.SWAP_INITIATED:
             # Waiting for participate txn to be confirmed in 'to' chain
-            if ci_to.using_segwit():
-                p2wsh = ci_to.getScriptDest(bid.participate_tx.script)
-                addr = ci_to.encodeScriptDest(p2wsh)
-            else:
-                addr = ci_to.encode_p2sh(bid.participate_tx.script)
-
-            ci_to = self.ci(coin_to)
             participate_txid = (
                 None
                 if bid.participate_tx is None or bid.participate_tx.txid is None
@@ -8739,6 +8732,11 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     save_bid = True
                 found = nav_logic.try_to_get_nav_ptx_info_from_chain(self, bid_id, bid, ci_to, participate_txid)
             else:
+                if ci_to.using_segwit():
+                    p2wsh = ci_to.getScriptDest(bid.participate_tx.script)
+                    addr = ci_to.encodeScriptDest(p2wsh)
+                else:
+                    addr = ci_to.encode_p2sh(bid.participate_tx.script)
                 found = ci_to.getLockTxHeight(
                     participate_txid,
                     addr,
