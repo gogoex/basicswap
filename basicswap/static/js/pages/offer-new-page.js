@@ -287,7 +287,7 @@ const RateManager = {
                 params += '&rate=' + values.rate + '&amt_from=' + values.amtFrom;
             }
         } else if (values.lockRate && valueChanged == 'amt_to') {
-            if (values.amtTo == '' || values.rate == '') {
+            if (!(parseFloat(values.amtTo) > 0)) {
                 return;
             }
             params += '&amt_to=' + values.amtTo + '&rate=' + values.rate;
