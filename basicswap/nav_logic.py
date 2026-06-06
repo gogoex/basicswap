@@ -146,10 +146,9 @@ def create_initiate_txn(sc, bid_id, bid, offer, ci_from, locktime, secret_hash, 
     seller_privkey = sc.getContractPrivkey(bid_date, bid.contract_count)
     blinding_key = ci_from.deriveBlindingKey(seller_privkey, bid.bidder_contract_pubkey)
 
-    timelock_opcode = "csv" if offer.lock_type < TxLockTypes.ABS_LOCK_BLOCKS else "cltv"
     txn, lock_tx_vout = ci_from.createInitiateTxn(
         nav_addr_redeem, nav_addr_refund, secret_hash, locktime, blinding_key, bid.amount,
-        timelock_opcode=timelock_opcode,
+        timelock_opcode="cltv",
     )
 
     return txn, lock_tx_vout, nav_addr_redeem, nav_addr_refund, blinding_key
