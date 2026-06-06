@@ -152,7 +152,7 @@ def create_initiate_txn(sc, bid_id, bid, offer, ci_from, locktime, secret_hash, 
 # [createParticipateTxn]
 # Side: Bidder
 # Call Graph: update -> checkBidState[BID_ACCEPTED] -> initiateTxnConfirmed -> createParticipateTxn
-def create_nav_ptx(sc, bid_id, bid, offer, ci, locktime, participate_script) -> tuple:
+def create_nav_ptx(sc, bid_id, bid, offer, ci) -> tuple:
     # Extract secret hash from ITX script and use offerer's nav address as redeem address and bidder's nav address as refund address
     secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
     nav_addr_redeem = bid.nav_redeem_addr
@@ -162,13 +162,15 @@ def create_nav_ptx(sc, bid_id, bid, offer, ci, locktime, participate_script) -> 
     # Derive blinding key via ECDH (bidder_privkey, offerer_pubkey)
     bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
     bidder_privkey = sc.getContractPrivkey(bid_date, bid.contract_count)
+    lock_value = ci.getParticipateLockValue(offer)
     blinding_key = ci.deriveBlindingKey(bidder_privkey, bid.offerer_contract_pubkey)
     # Create funded PTX and PTX refund txn
     txn_funded, vout_index = ci.createInitiateTxn(
-        nav_addr_redeem, nav_addr_refund, secret_hash, locktime, blinding_key, bid.amount_to,
+        nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key, bid.amount_to,
     )
+    participate_script = ci.createFakeNonNavHTLCScript(secret_hash, lock_value)
     refund_txn = sc.createRefundTxn(
-        Coins.NAV, txn_funded, offer, bid, None,
+        Coins.NAV, txn_funded, offer, bid, participate_script,
         addr_refund_out=nav_addr_refund, secret_hash=secret_hash, tx_type=TxTypes.PTX_REFUND,
     )
     bid.participate_txn_refund = bytes.fromhex(refund_txn)
@@ -183,7 +185,7 @@ def create_nav_ptx(sc, bid_id, bid, offer, ci, locktime, participate_script) -> 
         nav_addr_redeem,
         nav_addr_refund,
         secret_hash,
-        locktime,
+        lock_value,
         blinding_key,
     )
     ci.importBlsctScript(params, None)
@@ -191,7 +193,7 @@ def create_nav_ptx(sc, bid_id, bid, offer, ci, locktime, participate_script) -> 
     # Build NAV_PTX_IMPORT payload to send to offerer
     chain_height = ci.getChainHeight()
     nav_ptx_import_payload = _build_nav_htlc_import_payload(
-        MessageTypes.NAV_PTX_IMPORT, bid_id, blinding_key, locktime,
+        MessageTypes.NAV_PTX_IMPORT, bid_id, blinding_key, lock_value,
         nav_addr_redeem, nav_addr_refund, chain_height, txn_funded,
     )
 

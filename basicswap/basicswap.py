@@ -7022,20 +7022,15 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         # Participate txn is locked for half the time of the initiate txn
         lock_value = offer.lock_value // 2
-
         if offer.lock_type < TxLockTypes.ABS_LOCK_BLOCKS:
             sequence = ci_to.getExpectedSequence(offer.lock_type, lock_value)
-            nav_locktime = sequence
-            if coin_to == Coins.NAV:
-                participate_script = ci_to.createFakeNonNavHTLCScript(secret_hash, sequence)
-            else:
-                participate_script = atomic_swap_1.buildContractScript(
-                    sequence,
-                    secret_hash,
-                    pkhash_seller,
-                    pkhash_buyer_refund,
-                    op_hash=op_hash,
-                )
+            participate_script = atomic_swap_1.buildContractScript(
+                sequence,
+                secret_hash,
+                pkhash_seller,
+                pkhash_buyer_refund,
+                op_hash=op_hash,
+            )
         else:
             # Lock from the height or time of the block containing the initiate txn
             ci_from = self.ci(offer.coin_from)
@@ -7064,22 +7059,18 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             self.log.debug(
                 f"participate {ci_to.coin_name()} lock_value {lock_value} {contract_lock_value}"
             )
-            nav_locktime = contract_lock_value
-            if coin_to == Coins.NAV:
-                participate_script = ci_to.createFakeNonNavHTLCScript(secret_hash, contract_lock_value)
-            else:
-                participate_script = atomic_swap_1.buildContractScript(
-                    contract_lock_value,
-                    secret_hash,
-                    pkhash_seller,
-                    pkhash_buyer_refund,
-                    OpCodes.OP_CHECKLOCKTIMEVERIFY,
-                    op_hash=op_hash,
-                )
-        return participate_script, nav_locktime
+            participate_script = atomic_swap_1.buildContractScript(
+                contract_lock_value,
+                secret_hash,
+                pkhash_seller,
+                pkhash_buyer_refund,
+                OpCodes.OP_CHECKLOCKTIMEVERIFY,
+                op_hash=op_hash,
+            )
+        return participate_script
 
     def createParticipateTxn(
-        self, bid_id: bytes, bid, offer, participate_script: bytearray, nav_locktime: int
+        self, bid_id: bytes, bid, offer, participate_script: bytearray
     ):
         self.log.debug("createParticipateTxn")
 
@@ -7101,7 +7092,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             )
 
         if coin_to == Coins.NAV:
-            return nav_logic.create_nav_ptx(self, bid_id, bid, offer, ci, nav_locktime, participate_script)
+            return nav_logic.create_nav_ptx(self, bid_id, bid, offer, ci)
 
         if ci.using_segwit():
             p2wsh = ci.getScriptDest(participate_script)
@@ -7525,7 +7516,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             return  # Bid saved in checkBidState
 
         # Seller first mode, buyer participates
-        participate_script, nav_locktime = self.deriveParticipateScript(bid_id, bid, offer)
+        participate_script = self.deriveParticipateScript(bid_id, bid, offer)
         if bid.was_sent:
             if bid.participate_tx is not None:
                 self.log.warning(
@@ -7537,7 +7528,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 )
 
                 ci_to = self.ci(offer.coin_to)
-                txn, nav_ptx_import_payload = self.createParticipateTxn(bid_id, bid, offer, participate_script, nav_locktime)
+                txn, nav_ptx_import_payload = self.createParticipateTxn(bid_id, bid, offer, participate_script)
                 if Coins(offer.coin_to) == Coins.NAV:
                     nav_logic.publish_nav_ptx_and_send_ptx_import_msg(self, bid_id, bid, offer, ci_to, txn, nav_ptx_import_payload)
                 else:
