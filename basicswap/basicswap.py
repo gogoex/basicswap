@@ -8717,10 +8717,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 else bid.participate_tx.vout
             )
             if coin_to == Coins.NAV:
-                if not bid.was_sent:
-                    if not nav_logic.import_nav_ptx_and_apply_to_bid(self, bid_id, bid):
-                        return False
-                    save_bid = True
+                if bid.participate_tx is not None and bid.participate_tx.script is None:
+                    if nav_logic.import_nav_ptx_and_apply_to_bid(self, bid_id, bid):
+                        save_bid = True
                 found = nav_logic.try_to_get_nav_ptx_info_from_chain(self, bid_id, bid, ci_to, participate_txid)
             else:
                 if ci_to.using_segwit():
