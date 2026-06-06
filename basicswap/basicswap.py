@@ -11052,11 +11052,11 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             if not script_valid:
                 raise ValueError("Bad script")
             ensure(script_pkhash1 == bid.pkhash_buyer, "pkhash_buyer mismatch")
-        else:
+
+        if coin_from == Coins.NAV:
             script_lock_val = ci_from.extractHTLCLockVal(bid_accept_data.contract_script, is_nav=False)
             ensure(script_lock_val > ci_from.getChainHeight(), "NAV script lock height not above chain height")
-
-        if use_csv:
+        elif use_csv:
             expect_sequence = ci_from.getExpectedSequence(
                 offer.lock_type, offer.lock_value
             )
