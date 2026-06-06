@@ -7133,7 +7133,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         bid.participate_tx.script = participate_script
         bid.participate_tx.tx_data = bytes.fromhex(txn_signed)
 
-        return txn_signed
+        return txn_signed, None
 
     def createRedeemTxn(
         self,
