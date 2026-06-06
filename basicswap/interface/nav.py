@@ -328,11 +328,8 @@ class NAVInterface(BTCInterface):
         return address
 
     def getParticipateLockValue(self, offer) -> int:
-        itx_lock_time_half_in_blocks = offer.lock_value // 2 // 30  # half of ITX duration; 30s NAV block time
-        if offer.isSet("lock_blocks"):
-            nav_blocks = min(offer.lock_blocks, itx_lock_time_half_in_blocks)
-        else:
-            nav_blocks = itx_lock_time_half_in_blocks
+        # half of ITX duration; 30s NAV block time (no lock_blocks field in add-navio-new)
+        nav_blocks = offer.lock_value // 2 // 30
         return self.getChainHeight() + nav_blocks
 
     def getPrevOutInfoFromOffChainTxn(self, txn_hex: str, secret_hash: bytes) -> PrevOutInfo:
