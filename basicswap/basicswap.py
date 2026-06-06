@@ -5684,7 +5684,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 # Store the signed refund txn in case wallet is locked when refund is possible
                 if coin_from == Coins.NAV:
                     refund_txn = self.createRefundTxn(
-                        coin_from, txn, offer, bid, None,
+                        coin_from, txn, offer, bid, script,
                         addr_refund_out=nav_addr_refund, cursor=use_cursor,
                         secret_hash=secret_hash,
                     )
