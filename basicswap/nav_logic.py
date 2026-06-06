@@ -406,7 +406,10 @@ def process_nav_itx_import(sc, msg) -> None:
 def process_nav_ptx_import(sc, msg) -> None:
     msg_bytes = sc.getSmsgMsgBytes(msg)
     bid_id = msg_bytes[:28]
-    bid = sc.getBid(bid_id)
+    # PTX import always arrives after the offerer accepted and the ITX confirmed,
+    # so the bid is already in swaps_in_progress; mutate that live object so
+    # checkBidState (which reads the in-memory bid) sees nav_ptx_import_info.
+    bid = sc.swaps_in_progress[bid_id][0]
     bid.nav_ptx_import_info = msg_bytes
     sc.saveBid(bid_id, bid)
 
