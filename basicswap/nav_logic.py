@@ -382,7 +382,15 @@ def import_nav_ptx_and_apply_to_bid(sc, bid_id, bid) -> bool:
 def process_nav_itx_import(sc, msg) -> None:
     msg_bytes = sc.getSmsgMsgBytes(msg)
     bid_id = msg_bytes[:28]
-    bid = sc.getBid(bid_id)
+
+    # If bid_id is in swaps_in_progress, update the object there
+    # and save to the db. Otherwise, modify the bid object in the db
+    # so that later the bid in db will be added to swaps_in_progress
+    if bid_id in sc.swaps_in_progress:
+        bid = sc.swaps_in_progress[bid_id][0]
+    else:
+        bid = sc.getBid(bid_id)
+
     bid.nav_itx_import_info = msg_bytes
     # NAV_ITX_IMPORT may arrive after BID_ACCEPT; if initiate_tx already set, process immediately
     # rather than waiting for the next processBidAccept drain.
