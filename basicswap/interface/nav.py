@@ -801,6 +801,43 @@ class NAVInterface(BTCInterface):
     def _listBlsctUnspent(self) -> list:
         return self.rpc_wallet("listblsctunspent", [0])
 
+    # [MessageHandler: NAV_ITX_IMPORT]
+    # Side: Bidder
+    # Call Graph: update -> processMsg[NAV_ITX_IMPORT]
+    def processNavItxImport(self, msg) -> None:
+        from basicswap import nav_logic
+
+        msg_bytes = self._sc.getSmsgMsgBytes(msg)
+        bid_id = msg_bytes[:28]
+
+        # If bid_id is in swaps_in_progress, update the object there
+        # and save to the db. Otherwise, modify the bid object in the db
+        # so that later the bid in db will be added to swaps_in_progress
+        if bid_id in self._sc.swaps_in_progress:
+            bid = self._sc.swaps_in_progress[bid_id][0]
+        else:
+            bid = self._sc.getBid(bid_id)
+
+        bid.nav_itx_import_info = msg_bytes
+        # NAV_ITX_IMPORT may arrive after BID_ACCEPT; if initiate_tx already set, process immediately
+        # rather than waiting for the next processBidAccept drain.
+        if bid.initiate_tx is not None:
+            nav_logic.import_nav_itx_and_rescan_nav_chain(self._sc, bid_id, bid)
+        self._sc.saveBid(bid_id, bid)
+
+    # [MessageHandler: NAV_PTX_IMPORT]
+    # Side: Offerer
+    # Call Graph: update -> processMsg[NAV_PTX_IMPORT]
+    def processNavPtxImport(self, msg) -> None:
+        msg_bytes = self._sc.getSmsgMsgBytes(msg)
+        bid_id = msg_bytes[:28]
+        # PTX import always arrives after the offerer accepted and the ITX confirmed,
+        # so the bid is already in swaps_in_progress; mutate that live object so
+        # checkBidState (which reads the in-memory bid) sees nav_ptx_import_info.
+        bid = self._sc.swaps_in_progress[bid_id][0]
+        bid.nav_ptx_import_info = msg_bytes
+        self._sc.saveBid(bid_id, bid)
+
     # [MessageHandler: NAV_SECRET_REVEAL]
     # Side: Bidder
     # Call Graph: update -> processMsg[NAV_SECRET_REVEAL]

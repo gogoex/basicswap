@@ -13349,9 +13349,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             elif msg_type == MessageTypes.NAV_SECRET_REVEAL:
                 self.ci(Coins.NAV).processNavSecretReveal(msg)
             elif msg_type == MessageTypes.NAV_PTX_IMPORT:
-                nav_logic.process_nav_ptx_import(self, msg)
+                self.ci(Coins.NAV).processNavPtxImport(msg)
             elif msg_type == MessageTypes.NAV_ITX_IMPORT:
-                nav_logic.process_nav_itx_import(self, msg)
+                self.ci(Coins.NAV).processNavItxImport(msg)
 
         except InactiveCoin as ex:
             self.log.debug(

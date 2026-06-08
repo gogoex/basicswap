@@ -95,10 +95,10 @@ def import_itx_and_send_payload_msg_to_bidder(sc, bid_id, bid, offer, ci_from, n
     )
     sc.log.info(f"Sent NAV_ITX_IMPORT to bidder for bid {sc.log.id(bid_id)}")
 
-# [processBidAccept / process_nav_itx_import]
+# [processBidAccept / processNavItxImport]
 # Side: Bidder
 # Call Graph: processMsg[BID_ACCEPT] -> processBidAccept
-#             processMsg[NAV_ITX_IMPORT] -> process_nav_itx_import
+#             processMsg[NAV_ITX_IMPORT] -> processNavItxImport
 def import_nav_itx_and_rescan_nav_chain(sc, bid_id, bid) -> None:
     if bid.nav_itx_import_info is None:
         return
@@ -148,41 +148,6 @@ def import_nav_ptx_and_apply_to_bid(sc, bid_id, bid) -> bool:
     bid.participate_tx.tx_data_funded = tx_data_funded_bytes
     bid.nav_ptx_import_info = None
     return True
-
-# [MessageHandler: NAV_ITX_IMPORT]
-# Side: Bidder
-# Call Graph: update -> processMsg[NAV_ITX_IMPORT]
-def process_nav_itx_import(sc, msg) -> None:
-    msg_bytes = sc.getSmsgMsgBytes(msg)
-    bid_id = msg_bytes[:28]
-
-    # If bid_id is in swaps_in_progress, update the object there
-    # and save to the db. Otherwise, modify the bid object in the db
-    # so that later the bid in db will be added to swaps_in_progress
-    if bid_id in sc.swaps_in_progress:
-        bid = sc.swaps_in_progress[bid_id][0]
-    else:
-        bid = sc.getBid(bid_id)
-
-    bid.nav_itx_import_info = msg_bytes
-    # NAV_ITX_IMPORT may arrive after BID_ACCEPT; if initiate_tx already set, process immediately
-    # rather than waiting for the next processBidAccept drain.
-    if bid.initiate_tx is not None:
-        import_nav_itx_and_rescan_nav_chain(sc, bid_id, bid)
-    sc.saveBid(bid_id, bid)
-
-# [MessageHandler: NAV_PTX_IMPORT]
-# Side: Offerer
-# Call Graph: update -> processMsg[NAV_PTX_IMPORT]
-def process_nav_ptx_import(sc, msg) -> None:
-    msg_bytes = sc.getSmsgMsgBytes(msg)
-    bid_id = msg_bytes[:28]
-    # PTX import always arrives after the offerer accepted and the ITX confirmed,
-    # so the bid is already in swaps_in_progress; mutate that live object so
-    # checkBidState (which reads the in-memory bid) sees nav_ptx_import_info.
-    bid = sc.swaps_in_progress[bid_id][0]
-    bid.nav_ptx_import_info = msg_bytes
-    sc.saveBid(bid_id, bid)
 
 # [participateToBid]
 # Side: Bidder
