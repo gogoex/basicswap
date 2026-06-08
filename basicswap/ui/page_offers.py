@@ -187,7 +187,8 @@ def parseOfferFormData(swap_client, form_data, page_data, options={}):
     elif (
         parsed_data["coin_from"] in swap_client.coins_without_segwit
         and parsed_data["coin_to"] in swap_client.coins_without_segwit
-    ):
+    ) or Coins.NAV in (parsed_data["coin_from"], parsed_data["coin_to"]):
+        # NAV uses the secret-hash HTLC protocol (no adaptor sigs); force SELLER_FIRST
         parsed_data["swap_type"] = strSwapType(SwapTypes.SELLER_FIRST)
         swap_type = SwapTypes.SELLER_FIRST
     else:
