@@ -34,7 +34,7 @@ class NAVInterface(BTCInterface):
     # [createRedeemTxn]
     # Side: Both
     # Call Graph: Bidder: checkQueuedActions[REDEEM_ITX] -> redeemITx -> createRedeemTxn | Offerer: checkBidState[SWAP_INITIATED] -> participateTxnConfirmed -> createRedeemTxn
-    def build_nav_redeem_prevout(self, bid, nav_txn, privkey, txn_script, is_ptx) -> dict:
+    def buildNavRedeemPrevout(self, bid, nav_txn, privkey, txn_script, is_ptx) -> dict:
         secret_hash = atomic_swap_1.extractScriptSecretHash(txn_script)
         tx_data_funded = nav_txn.tx_data_funded
 
@@ -63,7 +63,7 @@ class NAVInterface(BTCInterface):
     # [createRefundTxn]
     # Side: Both
     # Call Graph: Bidder: createParticipateTxn -> createRefundTxn | Offerer: acceptBid -> createRefundTxn
-    def build_nav_refund_prevout(self, bid, txn, secret_hash, addr_refund_out) -> dict:
+    def buildNavRefundPrevout(self, bid, txn, secret_hash, addr_refund_out) -> dict:
         # Decodes funded tx via decodeblsctrawtransaction, finds the HTLC output matching secret_hash,
         # returns {"outid", "amount", "gamma"}. No spending_key — caller must derive and set it.
         prevout = self.getPrevOutInfoFromOffChainTxn(txn, secret_hash)
@@ -362,7 +362,7 @@ class NAVInterface(BTCInterface):
     # [checkBidState / SWAP_INITIATED]
     # Side: Bidder
     # Call Graph: update -> checkBidState[SWAP_INITIATED]
-    def detect_nav_itx_refund(self, bid) -> bool:
+    def detectNavItxRefund(self, bid) -> bool:
         # NAV ITX may be refunded while waiting for PTX confirmation.
         # BLSCT outputs have no visible address, so check via isHTLCTxnSpent (listblsctunspent).
         if (
@@ -725,7 +725,7 @@ class NAVInterface(BTCInterface):
     # [checkBidState]
     # Side: Offerer
     # Call Graph: update -> checkBidState
-    def is_initiate_txn_on_chain(self, bid) -> dict:
+    def isInitiateTxnOnChain(self, bid) -> dict:
         # Search by secret hash via listblsctunspent; BLSCT outputs have no visible address
         secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
         locktime = self.extractHTLCLockVal(bid.initiate_tx.script, is_nav=False)
@@ -740,7 +740,7 @@ class NAVInterface(BTCInterface):
     # [checkBidState]
     # Side: Offerer
     # Call Graph: update -> checkBidState
-    def is_nav_itx_refunded(self, bid) -> bool:
+    def isNavItxRefunded(self, bid) -> bool:
         # ITX was previously confirmed but UTXO gone — spent before re-detection, likely refunded
         if (
             bid.getITxState() == TxStates.TX_SENT
@@ -778,7 +778,7 @@ class NAVInterface(BTCInterface):
     # [checkBidState / SWAP_INITIATED]
     # Side: Offerer
     # Call Graph: update -> checkBidState[SWAP_INITIATED]
-    def try_to_get_nav_ptx_info_from_chain(self, bid, participate_txid):
+    def tryToGetNavPtxInfoFromChain(self, bid, participate_txid):
         # Search by secret hash via listblsctunspent; BLSCT outputs have no visible address
         if bid.participate_tx is None or bid.participate_tx.script is None:
             return None

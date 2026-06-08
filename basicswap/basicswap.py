@@ -7163,7 +7163,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         if coin_type == Coins.NAV:
             nav_txn, is_ptx = (bid.participate_tx, True) if for_txn_type == "participate" else (bid.initiate_tx, False)
-            prevout = ci.build_nav_redeem_prevout(bid, nav_txn, privkey, txn_script, is_ptx)
+            prevout = ci.buildNavRedeemPrevout(bid, nav_txn, privkey, txn_script, is_ptx)
         else:
             prevout = {
                 "txid": prev_txnid,
@@ -7336,7 +7336,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         if coin_type in (Coins.DCR,):
             prevout = ci.find_prevout_info(txn, txn_script)
         elif coin_type == Coins.NAV:
-            prevout = ci.build_nav_refund_prevout(bid, txn, secret_hash, addr_refund_out)
+            prevout = ci.buildNavRefundPrevout(bid, txn, secret_hash, addr_refund_out)
         else:
             # TODO: Sign in bsx for all coins
             txjs = self.callcoinrpc(Coins.PART, "decoderawtransaction", [txn])
@@ -8607,7 +8607,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     pass
             else:
                 if coin_from == Coins.NAV:
-                    found = ci_from.is_initiate_txn_on_chain(bid)
+                    found = ci_from.isInitiateTxnOnChain(bid)
                 else:
                     if ci_from.using_segwit():
                         dest_script = ci_from.getScriptDest(bid.initiate_tx.script)
@@ -8646,7 +8646,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                             # NAV txid changes after aggregation; track by outid (stable output ID) instead
                             bid.initiate_tx.txid = bytes.fromhex(outid)
                             save_bid = True
-                elif coin_from == Coins.NAV and ci_from.is_nav_itx_refunded(bid):
+                elif coin_from == Coins.NAV and ci_from.isNavItxRefunded(bid):
                     return True
 
             if bid.initiate_tx.conf != last_initiate_txn_conf:
@@ -8720,7 +8720,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 if bid.participate_tx is not None and bid.participate_tx.script is None:
                     if nav_logic.import_nav_ptx_and_apply_to_bid(self, bid_id, bid):
                         save_bid = True
-                found = ci_to.try_to_get_nav_ptx_info_from_chain(bid, participate_txid)
+                found = ci_to.tryToGetNavPtxInfoFromChain(bid, participate_txid)
             else:
                 if ci_to.using_segwit():
                     p2wsh = ci_to.getScriptDest(bid.participate_tx.script)
@@ -8779,7 +8779,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     self.participateTxnConfirmed(bid_id, bid, offer)
                     save_bid = True
             if coin_from == Coins.NAV:
-                if self.ci(coin_from).detect_nav_itx_refund(bid):
+                if self.ci(coin_from).detectNavItxRefund(bid):
                     save_bid = True
         elif state == BidStates.SWAP_PARTICIPATING:
             if coin_from == Coins.NAV or coin_to == Coins.NAV:
