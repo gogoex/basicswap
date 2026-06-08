@@ -2732,7 +2732,7 @@ def main():
             "datadir": os.getenv("LTC_DATA_DIR", os.path.join(data_dir, "litecoin")),
             "bindir": os.path.join(bin_dir, "litecoin"),
             "use_segwit": True,
-            "blocks_confirmed": 1,  # TODO NAV revert to 2
+            "blocks_confirmed": 2,
             "conf_target": 2,
             "core_version_no": getKnownVersion("litecoin"),
             "core_version_group": 20,
