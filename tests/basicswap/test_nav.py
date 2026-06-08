@@ -230,5 +230,69 @@ class TestBuildImportBlsctScriptParams(unittest.TestCase):
         assert len(params["blinding_key"]) == 64
         assert params["blinding_key"] == "0" * 63 + "1"
 
+class TestIsHTLCTxnSpent(unittest.TestCase):
+    """Tests for isHTLCTxnSpent (RPCs stubbed)."""
+
+    # Real HTLC spk that passes _isHTLCScript; secret_hash + lock_val (is_nav=True) below.
+    HTLC_HEX = (
+        "6382012088a820b812e53d1bd15a928803df44ab86c6a286d9a3d6625a3738f"
+        "bed32d89a4c7c178830a7b9a59a0e305eef4f756909e6fa107091fc6d2b2743"
+        "3d110d5d3c95ff987a0182bbd2e19897ee71af0466006cc2755467042c688b6"
+        "9b17530a7b9a59a0e305eef4f756909e6fa107091fc6d2b27433d110d5d3c95"
+        "ff987a0182bbd2e19897ee71af0466006cc2755468b3"
+    )
+    # A different valid HTLC spk (different secret_hash) for the no-match case.
+    OTHER_HTLC_HEX = (
+        "6382012088a8206756e66c48945a6851790e94fed56b86ec9d1e05116d4d289bf"
+        "62f858389c3998830a6c43cded614e403d715cd7f28a57736214937dd811bd7e2927eed4cd"
+        "904ee8df0066923c7dc021a36e94fa6f8fa21e36703710040b17530a769dfbee940c4f72c1"
+        "29b5a315822dabda7932f5f12b8d1c56d2335544995504af3e11446a3b544cb6ec51403377"
+        "33468b3"
+    )
+
+    def setUp(self):
+        self.ci = ci_nav()
+        spk = bytes.fromhex(self.HTLC_HEX)
+        secret_hash = atomic_swap_1.extractScriptSecretHash(spk)
+        lock_val = self.ci.extractHTLCLockVal(spk, is_nav=True)
+        # bidder-side stored ITX script (non-NAV fake) sharing the same hash + locktime
+        self.script = bytes(self.ci.createFakeNonNavHTLCScript(secret_hash, lock_val))
+
+    def _stub(self, utxos, gettxout=None):
+        self.ci._listBlsctUnspent = lambda: utxos
+        self.ci.rpc = lambda method, params=None: gettxout
+
+    def test_match_in_utxo_set_is_unspent(self):
+        self._stub([{"scriptPubKey": self.HTLC_HEX, "outid": "abc"}], gettxout={"value": 1})
+        assert self.ci.isHTLCTxnSpent(self.script) is False
+
+    def test_match_not_in_utxo_set_is_spent(self):
+        # gettxout returns empty → output confirmed-spent
+        self._stub([{"scriptPubKey": self.HTLC_HEX, "outid": "abc"}], gettxout=None)
+        assert self.ci.isHTLCTxnSpent(self.script) is True
+
+    def test_match_no_outid_falls_back_to_unspent(self):
+        self._stub([{"scriptPubKey": self.HTLC_HEX}])
+        assert self.ci.isHTLCTxnSpent(self.script) is False
+
+    def test_no_matching_htlc_is_spent(self):
+        # Different HTLC script (different secret_hash) → no match → spent
+        self._stub([{"scriptPubKey": self.OTHER_HTLC_HEX, "outid": "abc"}])
+        assert self.ci.isHTLCTxnSpent(self.script) is True
+
+    def test_non_htlc_utxos_skipped_is_spent(self):
+        self._stub([{"scriptPubKey": "76a91488ac", "outid": "x"}, {"scriptPubKey": "", "outid": "y"}])
+        assert self.ci.isHTLCTxnSpent(self.script) is True
+
+    def test_empty_utxo_list_is_spent(self):
+        self._stub([])
+        assert self.ci.isHTLCTxnSpent(self.script) is True
+
+    def test_exception_returns_false(self):
+        def boom():
+            raise RuntimeError("rpc down")
+        self.ci._listBlsctUnspent = boom
+        assert self.ci.isHTLCTxnSpent(self.script) is False
+
 if __name__ == "__main__":
     unittest.main()

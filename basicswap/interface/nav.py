@@ -919,7 +919,6 @@ class NAVInterface(BTCInterface):
             all_consumed()
         )
 
-    # TODO NAV write test
     # [isHTLCTxnSpent]
     # Side: Both
     # Call Graph: detectNavItxRefund | isNavItxRefunded | handleSwapParticipating -> isHTLCTxnSpent
