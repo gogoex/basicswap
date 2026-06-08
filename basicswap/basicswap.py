@@ -4420,7 +4420,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         key_path_base = "44445555h/1h/{}/{}".format(int(coin_type), key_num)
 
         if for_bls:
-            return nav_logic.derive_bls_key(self, coin_type, evkey, key_path_base)
+            return self.ci(coin_type).deriveBLSKey(evkey, key_path_base)
         elif for_ed25519:
             return self.grindForEd25519Key(coin_type, evkey, key_path_base)
         else:

@@ -11,7 +11,8 @@ from basicswap.interface.btc import (
 from basicswap.chainparams import Coins
 from typing import Optional, Any, TypedDict
 from basicswap.basicswap_util import BidStates, MessageTypes, TxLockTypes, TxStates, TxTypes
-from basicswap.util import SerialiseNum, TemporaryError, ensure
+from basicswap.util import SerialiseNum, TemporaryError, b2i, ensure
+from basicswap.util.address import decodeWif
 from basicswap.util.crypto import sha256
 from coincurve.keys import PrivateKey
 import datetime as dt
@@ -319,6 +320,27 @@ class NAVInterface(BTCInterface):
         txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn, None, False, fee])
 
         return txn_funded
+
+    # [getContractPrivkey]
+    # Side: Both
+    # Call Graph: various -> getContractPrivkey
+    def deriveBLSKey(self, evkey, key_path_base) -> bytes:
+        BLS_GROUP_ORDER = 0x73EDA753299D7D483339D80809A1D80553BDA402FFFE5BFEFFFFFFFF00000001
+        parent_path = key_path_base.rpartition("/")[0]
+        # TODO NAV: use 1 upon creating a pr
+        nonce = 2
+        while True:
+            key_path = "{}/{}".format(parent_path, nonce)
+            extkey = self._sc.callcoinrpc(Coins.PART, "extkey", ["info", evkey, key_path])["key_info"]["result"]
+            privkey = decodeWif(
+                self._sc.callcoinrpc(Coins.PART, "extkey", ["info", extkey])["key_info"]["privkey"]
+            )
+            i = b2i(privkey) % BLS_GROUP_ORDER
+            if i != 0:
+                return i.to_bytes(32, "big")
+            nonce += 1
+            if nonce > 0x7FFFFFFF:
+                raise ValueError("deriveBLSKey failed")
 
     def deriveBlindingKey(self, privkey: bytes, pubkey: bytes) -> int:
         """Derive a blinding key via ECDH: SHA256(ECDH(privkey, pubkey))."""

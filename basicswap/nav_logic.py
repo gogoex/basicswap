@@ -10,8 +10,7 @@ import basicswap.protocols.atomic_swap_1 as atomic_swap_1
 from basicswap.basicswap_util import ActionTypes, BidStates, EventLogTypes, MessageTypes, TxLockTypes, TxStates, TxTypes
 from basicswap.chainparams import Coins
 from basicswap.db import Concepts
-from basicswap.util import b2i, ensure
-from basicswap.util.address import decodeWif
+from basicswap.util import ensure
 
 
 def _build_import_blsct_script_params(nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key):
@@ -86,27 +85,6 @@ def confirm_wallet_minimum_balance(sc, c) -> None:
         raise
     except Exception as e:
         sc.log.warning(f"could not check NAV balance: {e}")
-
-# [getContractPrivkey]
-# Side: Both
-# Call Graph: various -> getContractPrivkey
-def derive_bls_key(sc, coin_type, evkey, key_path_base) -> bytes:
-    BLS_GROUP_ORDER = 0x73EDA753299D7D483339D80809A1D80553BDA402FFFE5BFEFFFFFFFF00000001
-    parent_path = key_path_base.rpartition("/")[0]
-    # TODO NAV: use 1 upon creating a pr
-    nonce = 2
-    while True:
-        key_path = "{}/{}".format(parent_path, nonce)
-        extkey = sc.callcoinrpc(Coins.PART, "extkey", ["info", evkey, key_path])["key_info"]["result"]
-        privkey = decodeWif(
-            sc.callcoinrpc(Coins.PART, "extkey", ["info", extkey])["key_info"]["privkey"]
-        )
-        i = b2i(privkey) % BLS_GROUP_ORDER
-        if i != 0:
-            return i.to_bytes(32, "big")
-        nonce += 1
-        if nonce > 0x7FFFFFFF:
-            raise ValueError("deriveBLSKey failed")
 
 # [checkBidState / SWAP_PARTICIPATING]
 # Side: Bidder
