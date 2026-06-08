@@ -906,6 +906,32 @@ class NAVInterface(BTCInterface):
             lock_val=lock_val,
         )
 
+    # [checkBidState / SWAP_INITIATED]
+    # Side: Offerer
+    # Call Graph: update -> checkBidState[SWAP_INITIATED]
+    def updatePtxOutidAndState(self, bid, coin_to, found) -> bool:
+        save_bid = False
+        if bid.participate_tx.conf != found["depth"]:
+            save_bid = True
+
+        # NAV txid changes after aggregation — track by outid instead
+        # Offerer: set txid from outid once known (bidder already has it from createParticipateTxn)
+        if not bid.was_sent and bid.participate_tx.txid is None:
+            outid = found.get("outid", None)
+            if outid:
+                bid.participate_tx.txid = bytes.fromhex(outid)
+                save_bid = True
+
+        if (
+            bid.participate_tx.conf is None
+            and bid.participate_tx.state != TxStates.TX_SENT
+        ):
+            bid.participate_tx.chain_height = self._sc.setLastHeightCheckedStart(coin_to, found["height"])
+            if bid.participate_tx.state is None or bid.participate_tx.state < TxStates.TX_SENT:
+                bid.setPTxState(TxStates.TX_SENT)
+            save_bid = True
+        return save_bid
+
     def verifyProofOfFunds(self, address, signature, utxos, extra_commit_bytes):
         additional_commitment = extra_commit_bytes.hex()
         result = self.rpc(

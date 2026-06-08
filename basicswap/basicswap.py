@@ -8737,7 +8737,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 )
             if found:
                 if coin_to == Coins.NAV:
-                    save_bid = nav_logic.update_ptx_outid_and_state(self, bid_id, bid, coin_to, ci_to, found)
+                    save_bid = ci_to.updatePtxOutidAndState(bid, coin_to, found)
                 else:
                     index = found.get("index", participate_txvout)
                     if bid.participate_tx.conf != found["depth"]:
