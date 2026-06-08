@@ -5713,7 +5713,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 )
 
                 if coin_from == Coins.NAV:
-                    nav_logic.import_itx_and_send_payload_msg_to_bidder(self, bid_id, bid, offer, ci_from, nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key, txn_funded, chain_height_before_submit, use_cursor)
+                    ci_from.importItxAndSendPayloadMsgToBidder(bid_id, bid, offer, nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key, txn_funded, chain_height_before_submit, use_cursor)
 
                 bid.initiate_tx = SwapTx(
                     bid_id=bid_id,

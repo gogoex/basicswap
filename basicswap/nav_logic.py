@@ -4,96 +4,12 @@
 # Distributed under the MIT software license, see the accompanying
 # file LICENSE or http://www.opensource.org/licenses/mit-license.php.
 
-import datetime as dt
-
 import basicswap.protocols.atomic_swap_1 as atomic_swap_1
-from basicswap.basicswap_util import BidStates, EventLogTypes, MessageTypes, TxLockTypes, TxStates, TxTypes
+from basicswap.basicswap_util import EventLogTypes, TxStates
 from basicswap.chainparams import Coins
 from basicswap.db import Concepts
 from basicswap.util import ensure
 
-
-def _build_import_blsct_script_params(nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key):
-    return {
-        "type": "atomic_swap",
-        "address_a": nav_addr_redeem,
-        "address_b": nav_addr_refund,
-        "hash": secret_hash.hex(),
-        "locktime": lock_value,
-        "timelock_opcode": "cltv",
-        "blinding_key": f"{blinding_key:064x}",
-    }
-
-def _build_nav_htlc_import_payload(msg_type, bid_id, blinding_key, lock_value, nav_addr_redeem, nav_addr_refund, chain_height, txn_funded):
-    addr_a_bytes = nav_addr_redeem.encode()
-    addr_b_bytes = nav_addr_refund.encode()
-    tx_data_bytes = bytes.fromhex(txn_funded)
-    return (
-        format(int(msg_type), "02x")
-        + bid_id.hex()
-        + blinding_key.to_bytes(32, "big").hex()
-        + lock_value.to_bytes(4, "big").hex()
-        + format(len(addr_a_bytes), "02x")
-        + addr_a_bytes.hex()
-        + format(len(addr_b_bytes), "02x")
-        + addr_b_bytes.hex()
-        + chain_height.to_bytes(4, "big").hex()
-        + len(tx_data_bytes).to_bytes(4, "big").hex()
-        + tx_data_bytes.hex()
-    )
-
-def _parse_nav_htlc_import_msg(msg_bytes):
-    offset = 0
-    bid_id = msg_bytes[offset: offset + 28]
-    offset += 28
-    blinding_key = int.from_bytes(msg_bytes[offset: offset + 32], "big")
-    offset += 32
-    lock_value = int.from_bytes(msg_bytes[offset: offset + 4], "big")
-    offset += 4
-    addr_a_len = msg_bytes[offset]
-    offset += 1
-    nav_addr_redeem = msg_bytes[offset: offset + addr_a_len].decode()
-    offset += addr_a_len
-    addr_b_len = msg_bytes[offset]
-    offset += 1
-    nav_addr_refund = msg_bytes[offset: offset + addr_b_len].decode()
-    offset += addr_b_len
-    rescan_from = int.from_bytes(msg_bytes[offset: offset + 4], "big")
-    offset += 4
-    tx_data_funded_bytes = None
-    if offset < len(msg_bytes):
-        tx_data_len = int.from_bytes(msg_bytes[offset: offset + 4], "big")
-        offset += 4
-        tx_data_funded_bytes = msg_bytes[offset: offset + tx_data_len]
-    return bid_id, blinding_key, lock_value, nav_addr_redeem, nav_addr_refund, rescan_from, tx_data_funded_bytes
-
-# [acceptBid]
-# Side: Offerer
-# Call Graph: checkQueuedActions[ACCEPT_BID] -> acceptBid
-def import_itx_and_send_payload_msg_to_bidder(sc, bid_id, bid, offer, ci_from, nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key, txn_funded, chain_height_before_submit, use_cursor):
-    # Import HTLC script so wallet tracks the output after tx aggregation (txid changes when mined).
-    params = _build_import_blsct_script_params(
-        nav_addr_redeem,
-        nav_addr_refund,
-        secret_hash,
-        lock_value,
-        blinding_key,
-    )
-    ci_from.importBlsctScript(params, chain_height_before_submit)
-
-    # Send NAV_ITX_IMPORT to bidder so they can import the HTLC script
-    # and have tx_data_funded available to create the ITx redeem txn.
-    nav_itx_import_payload = _build_nav_htlc_import_payload(
-        MessageTypes.NAV_ITX_IMPORT, bid_id, blinding_key, lock_value,
-        nav_addr_redeem, nav_addr_refund, chain_height_before_submit, txn_funded,
-    )
-    sc.sendMessage(
-        offer.addr_from, bid.bid_addr, nav_itx_import_payload,
-        sc.SMSG_SECONDS_IN_HOUR * 2, use_cursor,
-        message_nets=bid.message_nets,
-        payload_version=offer.smsg_payload_version,
-    )
-    sc.log.info(f"Sent NAV_ITX_IMPORT to bidder for bid {sc.log.id(bid_id)}")
 
 # [processBidAccept / processNavItxImport]
 # Side: Bidder
@@ -102,12 +18,12 @@ def import_itx_and_send_payload_msg_to_bidder(sc, bid_id, bid, offer, ci_from, n
 def import_nav_itx_and_rescan_nav_chain(sc, bid_id, bid) -> None:
     if bid.nav_itx_import_info is None:
         return
-    _, blinding_key, lock_value, nav_addr_redeem, nav_addr_refund, rescan_from, tx_data_funded_bytes = _parse_nav_htlc_import_msg(bid.nav_itx_import_info)
+    ci_nav = sc.ci(Coins.NAV)
+    _, blinding_key, lock_value, nav_addr_redeem, nav_addr_refund, rescan_from, tx_data_funded_bytes = ci_nav._parseHtlcImportMsg(bid.nav_itx_import_info)
     secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
-    params = _build_import_blsct_script_params(
+    params = ci_nav._buildImportBlsctScriptParams(
         nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key,
     )
-    ci_nav = sc.ci(Coins.NAV)
     ci_nav.importBlsctScript(params, rescan_from)
     sc.log.info(f"Imported NAV ITX HTLC script for bid {sc.log.id(bid_id)}")
     # Update initiate_tx.script to fake BLSCT format (with absolute locktime) so
@@ -134,12 +50,12 @@ def import_nav_itx_and_rescan_nav_chain(sc, bid_id, bid) -> None:
 def import_nav_ptx_and_apply_to_bid(sc, bid_id, bid) -> bool:
     if bid.nav_ptx_import_info is None:
         return False
-    _, blinding_key, lock_value, nav_addr_redeem, nav_addr_refund, rescan_from, tx_data_funded_bytes = _parse_nav_htlc_import_msg(bid.nav_ptx_import_info)
+    ci_nav = sc.ci(Coins.NAV)
+    _, blinding_key, lock_value, nav_addr_redeem, nav_addr_refund, rescan_from, tx_data_funded_bytes = ci_nav._parseHtlcImportMsg(bid.nav_ptx_import_info)
     secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
-    params = _build_import_blsct_script_params(
+    params = ci_nav._buildImportBlsctScriptParams(
         nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key,
     )
-    ci_nav = sc.ci(Coins.NAV)
     ci_nav.importBlsctScript(params, rescan_from)
     sc.log.info(f"Imported NAV PTX HTLC script for bid {sc.log.id(bid_id)}")
     ensure(tx_data_funded_bytes is not None, "NAV_PTX_IMPORT missing tx_data_funded")

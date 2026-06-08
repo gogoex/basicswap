@@ -10,7 +10,6 @@ from coincurve.keys import PrivateKey
 
 from basicswap.basicswap_util import MessageTypes, TxLockTypes
 from basicswap.interface.nav import NAVInterface
-from basicswap import nav_logic
 import basicswap.protocols.atomic_swap_1 as atomic_swap_1
 from tests.basicswap.util import REQUIRED_SETTINGS
 
@@ -178,7 +177,7 @@ class TestTimelockOpcode(unittest.TestCase):
         assert self._opcode(TxLockTypes.ABS_LOCK_TIME) == "cltv"
 
 class TestBuildParseHtlcImportPayload(unittest.TestCase):
-    """Round-trip tests for _build_nav_htlc_import_payload / _parse_nav_htlc_import_msg."""
+    """Round-trip tests for _buildHtlcImportPayload / _parseHtlcImportMsg."""
 
     def _roundtrip(self):
         bid_id = bytes(range(28))
@@ -189,13 +188,13 @@ class TestBuildParseHtlcImportPayload(unittest.TestCase):
         chain_height = 800
         txn_funded = "deadbeef" * 8
 
-        payload_hex = nav_logic._build_nav_htlc_import_payload(
+        payload_hex = NAVInterface._buildHtlcImportPayload(
             MessageTypes.NAV_ITX_IMPORT,
             bid_id, blinding_key, lock_value,
             nav_addr_redeem, nav_addr_refund, chain_height, txn_funded,
         )
         msg_bytes = bytes.fromhex(payload_hex[2:])  # skip 1-byte msg_type prefix
-        parsed = nav_logic._parse_nav_htlc_import_msg(msg_bytes)
+        parsed = NAVInterface._parseHtlcImportMsg(msg_bytes)
         p_bid_id, p_blinding_key, p_lock_value, p_addr_redeem, p_addr_refund, p_rescan_from, p_tx = parsed
 
         assert p_bid_id == bid_id
@@ -213,7 +212,7 @@ class TestBuildImportBlsctScriptParams(unittest.TestCase):
     def test_fields_and_types(self):
         secret_hash = bytes(range(32))
         blinding_key = 0xABCD1234
-        params = nav_logic._build_import_blsct_script_params(
+        params = NAVInterface._buildImportBlsctScriptParams(
             "NVredeem", "NVrefund", secret_hash, 12345, blinding_key,
         )
         assert params["type"] == "atomic_swap"
@@ -225,7 +224,7 @@ class TestBuildImportBlsctScriptParams(unittest.TestCase):
         assert params["blinding_key"] == f"{blinding_key:064x}"
 
     def test_blinding_key_zero_padded(self):
-        params = nav_logic._build_import_blsct_script_params(
+        params = NAVInterface._buildImportBlsctScriptParams(
             "a", "b", bytes(32), 1, 1,
         )
         assert len(params["blinding_key"]) == 64
