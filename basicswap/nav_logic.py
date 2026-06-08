@@ -67,25 +67,6 @@ def _parse_nav_htlc_import_msg(msg_bytes):
         tx_data_funded_bytes = msg_bytes[offset: offset + tx_data_len]
     return bid_id, blinding_key, lock_value, nav_addr_redeem, nav_addr_refund, rescan_from, tx_data_funded_bytes
 
-# [checkCoinsReady]
-# Side: Both
-# Call Graph: Bidder: postBid -> checkCoinsReady | Offerer: acceptBid -> checkCoinsReady
-def confirm_wallet_minimum_balance(sc, c) -> None:
-    ci = sc.ci(c)
-    try:
-        fee_rate, _ = ci.get_fee_rate()
-        min_bal = (fee_rate * ci.getHTLCSpendTxVSize()) / 1000 * 1.3
-        balance = ci.getWalletInfo().get("balance", 0.0)
-        if balance < min_bal:
-            raise ValueError(
-                f"Navio wallet balance ({balance:.8f} NAV) too low to pay redeem fees. "
-                f"Minimum {min_bal:.8f} NAV required."
-            )
-    except ValueError:
-        raise
-    except Exception as e:
-        sc.log.warning(f"could not check NAV balance: {e}")
-
 # [checkBidState / SWAP_PARTICIPATING]
 # Side: Bidder
 # Call Graph: update -> checkBidState[SWAP_PARTICIPATING]

@@ -1696,7 +1696,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 )
 
             if c == Coins.NAV:
-                nav_logic.confirm_wallet_minimum_balance(self, c)
+                self.ci(c).confirmWalletMinimumBalance()
 
     def isSystemUnlocked(self) -> bool:
         # TODO - Check all active coins

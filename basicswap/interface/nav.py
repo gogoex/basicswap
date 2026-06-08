@@ -87,6 +87,24 @@ class NAVInterface(BTCInterface):
             raise
         return expect_seedid == actual_seedid
 
+    # [checkCoinsReady]
+    # Side: Both
+    # Call Graph: Bidder: postBid -> checkCoinsReady | Offerer: acceptBid -> checkCoinsReady
+    def confirmWalletMinimumBalance(self) -> None:
+        try:
+            fee_rate, _ = self.get_fee_rate()
+            min_bal = (fee_rate * self.getHTLCSpendTxVSize()) / 1000 * 1.3
+            balance = self.getWalletInfo().get("balance", 0.0)
+            if balance < min_bal:
+                raise ValueError(
+                    f"Navio wallet balance ({balance:.8f} NAV) too low to pay redeem fees. "
+                    f"Minimum {min_bal:.8f} NAV required."
+                )
+        except ValueError:
+            raise
+        except Exception as e:
+            self._sc.log.warning(f"could not check NAV balance: {e}")
+
     def createFakeNonNavHTLCScript(self, secret_hash: bytearray, lock_value: int) -> bytearray:
         """
         Create a non-NAV HTLC script with zeroed-out fields,
