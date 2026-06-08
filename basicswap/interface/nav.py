@@ -998,6 +998,17 @@ class NAVInterface(BTCInterface):
         self._sc.createAction(delay, ActionTypes.REDEEM_ITX, bid_id)
         self._sc.saveBid(bid_id, bid)
 
+    # [participateToBid]
+    # Side: Bidder
+    # Call Graph: update -> checkBidState[BID_ACCEPTED] -> initiateTxnConfirmed
+    def publishPtxAndSendImportMsg(self, bid_id, bid, offer, txn, nav_ptx_import_payload) -> None:
+        txid = self.publishTx(bytes.fromhex(txn))
+        self._sc.log.debug(f"Submitted participate tx {self._sc.logIDT(txid)} to {self.coin_name()} chain for bid {self._sc.log.id(bid_id)}")
+        self._sc.sendMessage(bid.bid_addr, offer.addr_from, nav_ptx_import_payload, self._sc.SMSG_SECONDS_IN_HOUR * 2, None)
+        self._sc.log.info(f"Sent NAV_PTX_IMPORT to offer creator for bid {self._sc.log.id(bid_id)}")
+        bid.setPTxState(TxStates.TX_SENT)
+        self._sc.logEvent(Concepts.BID, bid.bid_id, EventLogTypes.PTX_PUBLISHED, "", None)
+
     def publishTx(self, tx: bytes):
         try:
             res = self.rpc("sendrawtransaction", [tx.hex()])

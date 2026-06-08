@@ -162,7 +162,6 @@ from .network.simplex import (
 from .network.bsx_network import BSXNetwork, networkTypeToID
 from .network.util import getMsgPubkey
 import basicswap.config as cfg
-import basicswap.nav_logic as nav_logic
 import basicswap.network.network as bsn
 import basicswap.protocols.atomic_swap_1 as atomic_swap_1
 import basicswap.protocols.xmr_swap_1 as xmr_swap_1
@@ -7530,7 +7529,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 ci_to = self.ci(offer.coin_to)
                 txn, nav_ptx_import_payload = self.createParticipateTxn(bid_id, bid, offer, participate_script)
                 if Coins(offer.coin_to) == Coins.NAV:
-                    nav_logic.publish_nav_ptx_and_send_ptx_import_msg(self, bid_id, bid, offer, ci_to, txn, nav_ptx_import_payload)
+                    ci_to.publishPtxAndSendImportMsg(bid_id, bid, offer, txn, nav_ptx_import_payload)
                 else:
                     txid = ci_to.publishTx(bytes.fromhex(txn))
                     self.log.debug(
