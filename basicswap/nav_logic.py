@@ -87,22 +87,6 @@ def confirm_wallet_minimum_balance(sc, c) -> None:
     except Exception as e:
         sc.log.warning(f"could not check NAV balance: {e}")
 
-# [acceptBid]
-# Side: Offerer
-# Call Graph: checkQueuedActions[ACCEPT_BID] -> acceptBid
-def create_initiate_txn(sc, bid_id, bid, offer, ci_from, locktime, secret_hash, bid_date, use_cursor):
-    ensure(bid.nav_redeem_addr is not None, "NAV ITX redeem address not set; bidder must send nav_redeem_addr in BID")
-    nav_addr_redeem = bid.nav_redeem_addr
-    nav_addr_refund = sc.getReceiveAddressFromPool(Coins.NAV, bid_id, TxTypes.ITX_REFUND, use_cursor)
-    seller_privkey = sc.getContractPrivkey(bid_date, bid.contract_count)
-    blinding_key = ci_from.deriveBlindingKey(seller_privkey, bid.bidder_contract_pubkey)
-
-    txn, lock_tx_vout = ci_from.createInitiateTxn(
-        nav_addr_redeem, nav_addr_refund, secret_hash, locktime, blinding_key, bid.amount,
-    )
-
-    return txn, lock_tx_vout, nav_addr_redeem, nav_addr_refund, blinding_key
-
 # [getContractPrivkey]
 # Side: Both
 # Call Graph: various -> getContractPrivkey

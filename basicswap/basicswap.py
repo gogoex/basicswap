@@ -5682,7 +5682,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 nav_addr_refund = None
                 blinding_key = None
                 if coin_from == Coins.NAV:
-                    txn, lock_tx_vout, nav_addr_redeem, nav_addr_refund, blinding_key = nav_logic.create_initiate_txn(self, bid_id, bid, offer, ci_from, lock_value, secret_hash, bid_date, use_cursor)
+                    txn, lock_tx_vout, nav_addr_redeem, nav_addr_refund, blinding_key = ci_from.createInitiateTxn(bid_id, bid, lock_value, secret_hash, bid_date, use_cursor)
                 else:
                     txn, lock_tx_vout = self.createInitiateTxn(
                         coin_from, bid_id, bid, script, prefunded_tx

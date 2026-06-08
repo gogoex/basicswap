@@ -102,7 +102,7 @@ class NAVInterface(BTCInterface):
         )
         return bytearray(fake_script)
 
-    def createInitiateTxn(
+    def createFundedHTLCTxn(
         self,
         address_a: str,
         address_b: str,
@@ -137,6 +137,22 @@ class NAVInterface(BTCInterface):
         self._log.info(f"vout index is {vout_index}")
 
         return txn_funded, vout_index
+
+    # [acceptBid]
+    # Side: Offerer
+    # Call Graph: checkQueuedActions[ACCEPT_BID] -> acceptBid
+    def createInitiateTxn(self, bid_id, bid, locktime, secret_hash, bid_date, use_cursor):
+        ensure(bid.nav_redeem_addr is not None, "NAV ITX redeem address not set; bidder must send nav_redeem_addr in BID")
+        nav_addr_redeem = bid.nav_redeem_addr
+        nav_addr_refund = self._sc.getReceiveAddressFromPool(Coins.NAV, bid_id, TxTypes.ITX_REFUND, use_cursor)
+        seller_privkey = self._sc.getContractPrivkey(bid_date, bid.contract_count)
+        blinding_key = self.deriveBlindingKey(seller_privkey, bid.bidder_contract_pubkey)
+
+        txn, lock_tx_vout = self.createFundedHTLCTxn(
+            nav_addr_redeem, nav_addr_refund, secret_hash, locktime, blinding_key, bid.amount,
+        )
+
+        return txn, lock_tx_vout, nav_addr_redeem, nav_addr_refund, blinding_key
 
     def _createRawFundedTransaction(
         self,
@@ -180,7 +196,7 @@ class NAVInterface(BTCInterface):
         lock_value = self.getParticipateLockValue(offer)
         blinding_key = self.deriveBlindingKey(bidder_privkey, bid.offerer_contract_pubkey)
         # Create funded PTX and PTX refund txn
-        txn_funded, vout_index = self.createInitiateTxn(
+        txn_funded, vout_index = self.createFundedHTLCTxn(
             nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key, bid.amount_to,
         )
         participate_script = self.createFakeNonNavHTLCScript(secret_hash, lock_value)
