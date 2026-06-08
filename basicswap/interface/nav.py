@@ -28,10 +28,16 @@ class PrevOutInfoWithSpendingKey(PrevOutInfo):
     spending_key: str
 
 class NAVInterface(BTCInterface):
+    # [coin_type]
+    # Side: Both
+    # Call Graph: various -> coin_type
     @staticmethod
     def coin_type() -> Coins: # type: ignore[override]
         return Coins.NAV
 
+    # [_buildHtlcImportPayload]
+    # Side: Both
+    # Call Graph: importItxAndSendPayloadMsgToBidder | createParticipateTxn -> _buildHtlcImportPayload
     @staticmethod
     def _buildHtlcImportPayload(msg_type, bid_id, blinding_key, lock_value, nav_addr_redeem, nav_addr_refund, chain_height, txn_funded):
         addr_a_bytes = nav_addr_redeem.encode()
@@ -51,6 +57,9 @@ class NAVInterface(BTCInterface):
             + tx_data_bytes.hex()
         )
 
+    # [_buildImportBlsctScriptParams]
+    # Side: Both
+    # Call Graph: importItxAndSendPayloadMsgToBidder | createParticipateTxn | importItxAndRescanChain | importPtxAndApplyToBid -> _buildImportBlsctScriptParams
     @staticmethod
     def _buildImportBlsctScriptParams(nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key):
         return {
@@ -109,6 +118,9 @@ class NAVInterface(BTCInterface):
         )
         return prevout
 
+    # [checkExpectedSeed]
+    # Side: Both
+    # Call Graph: checkWalletSeed -> checkExpectedSeed
     def checkExpectedSeed(self, expect_seedid: str) -> bool:
         RPC_WALLET_BLANK = -37
         try:
@@ -137,6 +149,9 @@ class NAVInterface(BTCInterface):
         except Exception as e:
             self._sc.log.warning(f"could not check NAV balance: {e}")
 
+    # [createFakeNonNavHTLCScript]
+    # Side: Both
+    # Call Graph: acceptBid | createParticipateTxn | importItxAndRescanChain | importPtxAndApplyToBid -> createFakeNonNavHTLCScript
     def createFakeNonNavHTLCScript(self, secret_hash: bytearray, lock_value: int) -> bytearray:
         """
         Create a non-NAV HTLC script with zeroed-out fields,
@@ -153,6 +168,9 @@ class NAVInterface(BTCInterface):
         )
         return bytearray(fake_script)
 
+    # [createFundedHTLCTxn]
+    # Side: Both
+    # Call Graph: createInitiateTxn (ITX) | createParticipateTxn (PTX) -> createFundedHTLCTxn
     def createFundedHTLCTxn(
         self,
         address_a: str,
@@ -205,6 +223,9 @@ class NAVInterface(BTCInterface):
 
         return txn, lock_tx_vout, nav_addr_redeem, nav_addr_refund, blinding_key
 
+    # [_createRawFundedTransaction]
+    # Side: Both
+    # Call Graph: createRawSignedTransaction -> _createRawFundedTransaction
     def _createRawFundedTransaction(
         self,
         addr_to: str,
@@ -287,6 +308,9 @@ class NAVInterface(BTCInterface):
 
         return txn_signed, nav_ptx_import_payload
 
+    # [createRawFundedTransaction]
+    # Side: Both
+    # Call Graph: fund helper for non-HTLC NAV txns
     def createRawFundedTransaction(
         self,
         addr_to: str,
@@ -301,10 +325,16 @@ class NAVInterface(BTCInterface):
             sub_fee,
             lock_unspents)
 
+    # [createRawSignedTransaction]
+    # Side: Both
+    # Call Graph: createInitiateTxn | createParticipateTxn (non-NAV path) -> createRawSignedTransaction
     def createRawSignedTransaction(self, addr_to, amount) -> str:
         txn_funded = self._createRawFundedTransaction(addr_to, amount)
         return self.rpc_wallet("signblsctrawtransaction", [txn_funded])
 
+    # [createRedeemTxn]
+    # Side: Both
+    # Call Graph: Bidder: redeemITx -> createRedeemTxn | Offerer: participateTxnConfirmed -> createRedeemTxn
     def createRedeemTxn(
         self,
         prevout: PrevOutInfoWithSpendingKey, # amount is in NAV
@@ -336,6 +366,9 @@ class NAVInterface(BTCInterface):
 
         return txn_funded
 
+    # [createRefundTxn]
+    # Side: Both
+    # Call Graph: Bidder: createParticipateTxn -> createRefundTxn | Offerer: acceptBid -> createRefundTxn
     def createRefundTxn(
         self,
         prevout: PrevOutInfoWithSpendingKey, # amount is in NAV
@@ -390,6 +423,9 @@ class NAVInterface(BTCInterface):
             if nonce > 0x7FFFFFFF:
                 raise ValueError("deriveBLSKey failed")
 
+    # [deriveBlindingKey]
+    # Side: Both
+    # Call Graph: buildNavRedeemPrevout | buildNavRefundPrevout | createInitiateTxn | createParticipateTxn -> deriveBlindingKey
     def deriveBlindingKey(self, privkey: bytes, pubkey: bytes) -> int:
         """Derive a blinding key via ECDH: SHA256(ECDH(privkey, pubkey))."""
 
@@ -397,11 +433,17 @@ class NAVInterface(BTCInterface):
         blinding_key_bytes = sha256(ecdh_secret)
         return int.from_bytes(blinding_key_bytes, "big")
 
+    # [deriveSpendingKey]
+    # Side: Both
+    # Call Graph: buildNavRedeemPrevout | buildNavRefundPrevout -> deriveSpendingKey
     def deriveSpendingKey(self, blinding_key_hex: str, address: str) -> str:
         """Derive the private spending key for a BLSCT HTLC output.
         Uses rpc_wallet because the address must be owned by this wallet."""
         return self.rpc_wallet("deriveblsctspendingkey", [blinding_key_hex, address])
 
+    # [describeTx]
+    # Side: Both
+    # Call Graph: createInitiateTxn (non-NAV path) -> describeTx
     def describeTx(self, tx_hex: str):
         # tx_hex is expected to be sigined
         # for txs before signing, use decodeblsctrawtransaction
@@ -423,6 +465,9 @@ class NAVInterface(BTCInterface):
             return True
         return False
 
+    # [extractHTLCLockVal]
+    # Side: Both
+    # Call Graph: processBidAccept | isInitiateTxnOnChain | tryToGetNavPtxInfoFromChain | getNavLockTxHeight | isHTLCTxnSpent -> extractHTLCLockVal
     def extractHTLCLockVal(self, script: bytes, is_nav: bool) -> int:
         if is_nav:
             push_size = script[90]
@@ -433,6 +478,9 @@ class NAVInterface(BTCInterface):
         return int.from_bytes(locktime_bytes, byteorder='little')
 
     # TODO NAV remove this after verificationprogress issue is fixed
+    # [getBlockchainInfo]
+    # Side: Both
+    # Call Graph: update -> getBlockchainInfo
     def getBlockchainInfo(self):
         rv = self.rpc("getblockchaininfo")
         blocks = rv.get("blocks", 0)
@@ -442,6 +490,9 @@ class NAVInterface(BTCInterface):
         return rv
 
     # Workaround: naviod crashes with getblock verbosity=2 (MoneyRange assertion). Remove once naviod fixes.
+    # [getBlockWithTxns]
+    # Side: Both
+    # Call Graph: checkForSpends -> getBlockWithTxns
     def getBlockWithTxns(self, block_hash: str):
         # naviod crashes with getblock with verbosity 2 (MoneyRange bug),
         # so use getblockheader and return an empty tx list b/c NAV will not use txs there
@@ -454,6 +505,9 @@ class NAVInterface(BTCInterface):
             "tx": [],
         }
 
+    # [get_fee_rate]
+    # Side: Both
+    # Call Graph: getFeeRateForCoin | confirmWalletMinimumBalance -> get_fee_rate
     def get_fee_rate(self, conf_target: int = 2) -> tuple[float, str]:
         del conf_target
         chain_client_settings = self._sc.getChainClientSettings(
@@ -472,12 +526,18 @@ class NAVInterface(BTCInterface):
 
         return nav_per_kb, "default_feerate"
 
+    # [getHTLCSpendTxVSize]
+    # Side: Both
+    # Call Graph: createRedeemTxn | estimateWithdrawFee | confirmWalletMinimumBalance -> getHTLCSpendTxVSize
     def getHTLCSpendTxVSize(self, redeem: bool = True) -> int:
         del redeem
         # always using the size of a refund transaction since the size
         # difference between redeem and refund transactions are small
         return 1336
 
+    # [getNavLockTxHeight]
+    # Side: Offerer
+    # Call Graph: checkBidState[SWAP_INITIATED] -> isInitiateTxnOnChain | tryToGetNavPtxInfoFromChain -> getNavLockTxHeight
     def getNavLockTxHeight(
         self,
         txid,
@@ -524,6 +584,9 @@ class NAVInterface(BTCInterface):
 
         return None
 
+    # [getNewAddress]
+    # Side: Both
+    # Call Graph: getReceiveAddressFromPool -> getNewAddress
     def getNewAddress(self, use_segwit: bool, label: str = "swap_receive") -> str:
         del use_segwit
         address: str = self.rpc(
@@ -535,11 +598,17 @@ class NAVInterface(BTCInterface):
         )
         return address
 
+    # [getParticipateLockValue]
+    # Side: Bidder
+    # Call Graph: createParticipateTxn -> getParticipateLockValue
     def getParticipateLockValue(self, offer) -> int:
         # half of ITX duration; 30s NAV block time (no lock_blocks field in add-navio-new)
         nav_blocks = offer.lock_value // 2 // 30
         return self.getChainHeight() + nav_blocks
 
+    # [getPrevOutInfoFromOffChainTxn]
+    # Side: Both
+    # Call Graph: buildNavRedeemPrevout | buildNavRefundPrevout | createParticipateTxn -> getPrevOutInfoFromOffChainTxn
     def getPrevOutInfoFromOffChainTxn(self, txn_hex: str, secret_hash: bytes) -> PrevOutInfo:
         txjs = self.rpc_wallet("decodeblsctrawtransaction", [txn_hex])
         self._log.debug(f"getPrevOutInfoFromOffChainTxn: secret_hash={secret_hash.hex()}")
@@ -557,6 +626,9 @@ class NAVInterface(BTCInterface):
                 }
         raise ValueError(f"No HTLC output found for secret_hash={secret_hash.hex()}")
 
+    # [getProofOfFunds]
+    # Side: Both
+    # Call Graph: postOffer | postBid -> getProofOfFunds
     def getProofOfFunds(self, amount_for, extra_commit_bytes):
         amount_btc = amount_for / 100_000_000
         additional_commitment = extra_commit_bytes.hex()
@@ -566,9 +638,15 @@ class NAVInterface(BTCInterface):
         proof_hex = result["proof"]
         return ("blsct_balance_proof", proof_hex, [])
 
+    # [getSeedHash]
+    # Side: Both
+    # Call Graph: storeSeedIDForCoin -> getSeedHash
     def getSeedHash(self, seed: bytes) -> bytes:
         return seed
 
+    # [getWalletInfo]
+    # Side: Both
+    # Call Graph: getWalletInfo | updateWalletInfo | confirmWalletMinimumBalance -> getWalletInfo
     def getWalletInfo(self):
         rv = super().getWalletInfo()
         # listblsctunspent returns both wallet outputs (address present) and
@@ -592,6 +670,9 @@ class NAVInterface(BTCInterface):
             self._log.warning(f"NAV getWalletInfo listblsctunspent failed: {e}")
         return rv
 
+    # [getWalletSeedID]
+    # Side: Both
+    # Call Graph: checkWalletSeed | checkExpectedSeed -> getWalletSeedID
     def getWalletSeedID(self) -> str:
         """
         The Navio wallet has been initialized using the root key generated by
@@ -619,6 +700,9 @@ class NAVInterface(BTCInterface):
                 save_bid = True
         return save_bid
 
+    # [importBlsctScript]
+    # Side: Both
+    # Call Graph: importItxAndSendPayloadMsgToBidder | createParticipateTxn | importItxAndRescanChain | importPtxAndApplyToBid -> importBlsctScript
     def importBlsctScript(self, params: dict, rescan_from: None | int) -> dict:
         if rescan_from is not None:
             try:
@@ -712,6 +796,9 @@ class NAVInterface(BTCInterface):
         bid.nav_ptx_import_info = None
         return True
 
+    # [initialiseWallet]
+    # Side: Both
+    # Call Graph: initialiseWallet (wallet setup) -> initialiseWallet
     def initialiseWallet(self, key_bytes, restore_time: int = -1):
         del restore_time
         key_wif = self.encodeKey(key_bytes)
@@ -724,6 +811,9 @@ class NAVInterface(BTCInterface):
                  self._log.debug(f"setblsctseed failed: {e}")
                  raise (e)
 
+    # [_isHTLCScript]
+    # Side: Both
+    # Call Graph: createFundedHTLCTxn | getNavLockTxHeight | isHTLCTxnSpent -> _isHTLCScript
     def _isHTLCScript(self, script: str) -> bool:
         """
         Determines if a script is a Navio HTLC script.
@@ -830,6 +920,9 @@ class NAVInterface(BTCInterface):
         )
 
     # TODO NAV write test
+    # [isHTLCTxnSpent]
+    # Side: Both
+    # Call Graph: detectNavItxRefund | isNavItxRefunded | handleSwapParticipating -> isHTLCTxnSpent
     def isHTLCTxnSpent(self, script: bytes) -> bool:
         secret_hash = atomic_swap_1.extractScriptSecretHash(script)
         locktime = self.extractHTLCLockVal(script, is_nav=False)
@@ -902,14 +995,23 @@ class NAVInterface(BTCInterface):
             return True
         return False
 
+    # [isTxNonFinalError]
+    # Side: Both
+    # Call Graph: acceptBid | checkBidState -> isTxNonFinalError
     def isTxNonFinalError(self, err_str: str) -> bool:
         # non-final-input: refund submitted before CLTV locktime expires
         # bad-inputs-unknown: refund input not in UTXO set; PTX still in mempool (BLSCT outputs unspendable until confirmed)
         return "non-final-input" in err_str or "bad-input-unknown" in err_str or "bad-inputs-unknown" in err_str or "'code': 25" in err_str
 
+    # [_listBlsctUnspent]
+    # Side: Both
+    # Call Graph: getNavLockTxHeight | isHTLCTxnSpent -> _listBlsctUnspent
     def _listBlsctUnspent(self) -> list:
         return self.rpc_wallet("listblsctunspent", [0])
 
+    # [_parseHtlcImportMsg]
+    # Side: Both
+    # Call Graph: importItxAndRescanChain | importPtxAndApplyToBid -> _parseHtlcImportMsg
     @staticmethod
     def _parseHtlcImportMsg(msg_bytes):
         offset = 0
@@ -1009,6 +1111,9 @@ class NAVInterface(BTCInterface):
         bid.setPTxState(TxStates.TX_SENT)
         self._sc.logEvent(Concepts.BID, bid.bid_id, EventLogTypes.PTX_PUBLISHED, "", None)
 
+    # [publishTx]
+    # Side: Both
+    # Call Graph: acceptBid | publishPtxAndSendImportMsg -> publishTx
     def publishTx(self, tx: bytes):
         try:
             res = self.rpc("sendrawtransaction", [tx.hex()])
@@ -1029,6 +1134,9 @@ class NAVInterface(BTCInterface):
         payload_hex = str.format("{:02x}", MessageTypes.NAV_SECRET_REVEAL) + bid_id.hex() + secret.hex()
         self._sc.sendMessage(offer.addr_from, bid.bid_addr, payload_hex, self._sc.SMSG_SECONDS_IN_HOUR, None)
 
+    # [signBlsct]
+    # Side: Both
+    # Call Graph: acceptBid | createParticipateTxn | createRedeemTxn -> signBlsct
     def signBlsct(self, txn):
         signed_txn = self.rpc("signblsctrawtransaction", [txn])
         return signed_txn
@@ -1076,6 +1184,9 @@ class NAVInterface(BTCInterface):
             save_bid = True
         return save_bid
 
+    # [verifyProofOfFunds]
+    # Side: Both
+    # Call Graph: processBid -> verifyProofOfFunds
     def verifyProofOfFunds(self, address, signature, utxos, extra_commit_bytes):
         additional_commitment = extra_commit_bytes.hex()
         result = self.rpc(
@@ -1086,6 +1197,9 @@ class NAVInterface(BTCInterface):
         min_amount_btc = result["min_amount"]
         return int(round(min_amount_btc * 100_000_000))
 
+    # [verifyRawTransaction]
+    # Side: Both
+    # Call Graph: createRedeemTxn | createRefundTxn -> verifyRawTransaction
     def verifyRawTransaction(self, txn, prevouts):
         del prevouts
         res = self.rpc("testmempoolaccept", [[txn]])
