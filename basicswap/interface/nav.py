@@ -10,7 +10,7 @@ from basicswap.interface.btc import (
 )
 from basicswap.chainparams import Coins
 from typing import Optional, Any, TypedDict
-from basicswap.basicswap_util import BidStates, MessageTypes, TxLockTypes, TxStates, TxTypes
+from basicswap.basicswap_util import ActionTypes, BidStates, MessageTypes, TxLockTypes, TxStates, TxTypes
 from basicswap.util import SerialiseNum, TemporaryError, b2i, ensure
 from basicswap.util.address import decodeWif
 from basicswap.util.crypto import sha256
@@ -762,6 +762,33 @@ class NAVInterface(BTCInterface):
     def _listBlsctUnspent(self) -> list:
         return self.rpc_wallet("listblsctunspent", [0])
 
+    # [MessageHandler: NAV_SECRET_REVEAL]
+    # Side: Bidder
+    # Call Graph: update -> processMsg[NAV_SECRET_REVEAL]
+    def processNavSecretReveal(self, msg) -> None:
+        msg_bytes = self._sc.getSmsgMsgBytes(msg)
+        bid_id = msg_bytes[:28]
+        secret = msg_bytes[28:60]
+
+        self._sc.log.info(f"Received NAV secret reveal for bid {self._sc.log.id(bid_id)}")
+        if bid_id not in self._sc.swaps_in_progress:
+            self._sc.log.warning(f"processNavSecretReveal: bid {self._sc.log.id(bid_id)} not in progress")
+            return
+
+        bid = self._sc.swaps_in_progress[bid_id][0]
+        if bid.was_received:
+            self._sc.log.debug(f"processNavSecretReveal: offerer ignoring own reveal for bid {self._sc.log.id(bid_id)}")
+            return
+
+        bid.recovered_secret = secret
+        # NAV PTx was spent by the offerer to reveal the secret — mark it redeemed
+        if bid.participate_tx:
+            bid.setPTxState(TxStates.TX_REDEEMED)
+        delay = self._sc.get_short_delay_event_seconds()
+        self._sc.log.info(f"Redeeming ITX for bid {self._sc.log.id(bid_id)} in {delay} seconds.")
+        self._sc.createAction(delay, ActionTypes.REDEEM_ITX, bid_id)
+        self._sc.saveBid(bid_id, bid)
+
     def publishTx(self, tx: bytes):
         try:
             res = self.rpc("sendrawtransaction", [tx.hex()])
@@ -770,6 +797,17 @@ class NAVInterface(BTCInterface):
                 raise TemporaryError(str(e))
             raise
         return res
+
+    # [participateTxnConfirmed]
+    # Side: Offerer
+    # Call Graph: update -> checkBidState[SWAP_INITIATED] -> participateTxnConfirmed
+    def sendNavSecretReveal(self, bid_id, bid, offer) -> None:
+        # NAV uses BLSCT (private txns) so bidder can't observe the secret from the chain directly.
+        # Offerer explicitly sends the secret to bidder so bidder can redeem the ITX (non-NAV side).
+        bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
+        secret = self._sc.getContractSecret(bid_date, bid.contract_count)
+        payload_hex = str.format("{:02x}", MessageTypes.NAV_SECRET_REVEAL) + bid_id.hex() + secret.hex()
+        self._sc.sendMessage(offer.addr_from, bid.bid_addr, payload_hex, self._sc.SMSG_SECONDS_IN_HOUR, None)
 
     def signBlsct(self, txn):
         signed_txn = self.rpc("signblsctrawtransaction", [txn])

@@ -7,7 +7,7 @@
 import datetime as dt
 
 import basicswap.protocols.atomic_swap_1 as atomic_swap_1
-from basicswap.basicswap_util import ActionTypes, BidStates, EventLogTypes, MessageTypes, TxLockTypes, TxStates, TxTypes
+from basicswap.basicswap_util import BidStates, EventLogTypes, MessageTypes, TxLockTypes, TxStates, TxTypes
 from basicswap.chainparams import Coins
 from basicswap.db import Concepts
 from basicswap.util import ensure
@@ -223,33 +223,6 @@ def process_nav_ptx_import(sc, msg) -> None:
     bid.nav_ptx_import_info = msg_bytes
     sc.saveBid(bid_id, bid)
 
-# [MessageHandler: NAV_SECRET_REVEAL]
-# Side: Bidder
-# Call Graph: update -> processMsg[NAV_SECRET_REVEAL]
-def process_nav_secret_reveal(sc, msg) -> None:
-    msg_bytes = sc.getSmsgMsgBytes(msg)
-    bid_id = msg_bytes[:28]
-    secret = msg_bytes[28:60]
-
-    sc.log.info(f"Received NAV secret reveal for bid {sc.log.id(bid_id)}")
-    if bid_id not in sc.swaps_in_progress:
-        sc.log.warning(f"processNavSecretReveal: bid {sc.log.id(bid_id)} not in progress")
-        return
-
-    bid = sc.swaps_in_progress[bid_id][0]
-    if bid.was_received:
-        sc.log.debug(f"processNavSecretReveal: offerer ignoring own reveal for bid {sc.log.id(bid_id)}")
-        return
-
-    bid.recovered_secret = secret
-    # NAV PTx was spent by the offerer to reveal the secret — mark it redeemed
-    if bid.participate_tx:
-        bid.setPTxState(TxStates.TX_REDEEMED)
-    delay = sc.get_short_delay_event_seconds()
-    sc.log.info(f"Redeeming ITX for bid {sc.log.id(bid_id)} in {delay} seconds.")
-    sc.createAction(delay, ActionTypes.REDEEM_ITX, bid_id)
-    sc.saveBid(bid_id, bid)
-
 # [participateToBid]
 # Side: Bidder
 # Call Graph: update -> checkBidState[BID_ACCEPTED] -> initiateTxnConfirmed
@@ -260,17 +233,6 @@ def publish_nav_ptx_and_send_ptx_import_msg(sc, bid_id, bid, offer, ci_to, txn, 
     sc.log.info(f"Sent NAV_PTX_IMPORT to offer creator for bid {sc.log.id(bid_id)}")
     bid.setPTxState(TxStates.TX_SENT)
     sc.logEvent(Concepts.BID, bid.bid_id, EventLogTypes.PTX_PUBLISHED, "", None)
-
-# [participateTxnConfirmed]
-# Side: Offerer
-# Call Graph: update -> checkBidState[SWAP_INITIATED] -> participateTxnConfirmed
-def send_nav_secret_reveal(sc, bid_id, bid, offer) -> None:
-    # NAV uses BLSCT (private txns) so bidder can't observe the secret from the chain directly.
-    # Offerer explicitly sends the secret to bidder so bidder can redeem the ITX (non-NAV side).
-    bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
-    secret = sc.getContractSecret(bid_date, bid.contract_count)
-    payload_hex = str.format("{:02x}", MessageTypes.NAV_SECRET_REVEAL) + bid_id.hex() + secret.hex()
-    sc.sendMessage(offer.addr_from, bid.bid_addr, payload_hex, sc.SMSG_SECONDS_IN_HOUR, None)
 
 # [checkBidState / SWAP_INITIATED]
 # Side: Offerer

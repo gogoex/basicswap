@@ -7661,7 +7661,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 Concepts.BID, bid.bid_id, EventLogTypes.PTX_REDEEM_PUBLISHED, "", None
             )
             if Coins(offer.coin_to) == Coins.NAV:
-                nav_logic.send_nav_secret_reveal(self, bid_id, bid, offer)
+                self.ci(Coins.NAV).sendNavSecretReveal(bid_id, bid, offer)
 
             # TX_REDEEMED will be set when spend is detected
             # TODO: Wait for depth?
@@ -13347,7 +13347,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             elif msg_type == MessageTypes.PORTAL_SEND:
                 self.processPortalMessage(msg)
             elif msg_type == MessageTypes.NAV_SECRET_REVEAL:
-                nav_logic.process_nav_secret_reveal(self, msg)
+                self.ci(Coins.NAV).processNavSecretReveal(msg)
             elif msg_type == MessageTypes.NAV_PTX_IMPORT:
                 nav_logic.process_nav_ptx_import(self, msg)
             elif msg_type == MessageTypes.NAV_ITX_IMPORT:
