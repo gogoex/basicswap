@@ -632,6 +632,38 @@ class NAVInterface(BTCInterface):
             args.append(rescan_from)
         return self.rpc_wallet("importblsctscript", args)
 
+    # [processBidAccept / processNavItxImport]
+    # Side: Bidder
+    # Call Graph: processMsg[BID_ACCEPT] -> processBidAccept
+    #             processMsg[NAV_ITX_IMPORT] -> processNavItxImport
+    def importItxAndRescanChain(self, bid_id, bid) -> None:
+        if bid.nav_itx_import_info is None:
+            return
+        _, blinding_key, lock_value, nav_addr_redeem, nav_addr_refund, rescan_from, tx_data_funded_bytes = self._parseHtlcImportMsg(bid.nav_itx_import_info)
+        secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
+        params = self._buildImportBlsctScriptParams(
+            nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key,
+        )
+        self.importBlsctScript(params, rescan_from)
+        self._sc.log.info(f"Imported NAV ITX HTLC script for bid {self._sc.log.id(bid_id)}")
+        # Update initiate_tx.script to fake BLSCT format (with absolute locktime) so
+        # isHTLCTxnSpent can match the on-chain UTxO locktime correctly.
+        bid.initiate_tx.script = self.createFakeNonNavHTLCScript(secret_hash, lock_value)
+        # ITx is already on-chain when bidder imports; rescanblockchain finds the existing UTXO
+        if rescan_from is not None:
+            try:
+                chain_height = self.rpc("getblockchaininfo")["blocks"]
+                rescan_from = min(rescan_from, chain_height)
+            except Exception as e:
+                self._sc.log.warning(f"importItxAndRescanChain: could not clamp rescan_from: {e}")
+            self._sc.log.info(f"Rescanning from height {rescan_from} to find ITX UTXO")
+            self.rpc_wallet("rescanblockchain", [rescan_from])
+            self._sc.log.info(f"Rescan complete")
+        ensure(tx_data_funded_bytes is not None, "NAV_ITX_IMPORT missing tx_data_funded")
+        ensure(bid.initiate_tx.tx_data_funded is None, "NAV ITX tx_data_funded already set")
+        bid.initiate_tx.tx_data_funded = tx_data_funded_bytes
+        bid.nav_itx_import_info = None
+
     # [acceptBid]
     # Side: Offerer
     # Call Graph: checkQueuedActions[ACCEPT_BID] -> acceptBid
@@ -659,6 +691,26 @@ class NAVInterface(BTCInterface):
             payload_version=offer.smsg_payload_version,
         )
         self._sc.log.info(f"Sent NAV_ITX_IMPORT to bidder for bid {self._sc.log.id(bid_id)}")
+
+    # [checkBidState / SWAP_INITIATED]
+    # Side: Offerer
+    # Call Graph: update -> checkBidState[SWAP_INITIATED]
+    def importPtxAndApplyToBid(self, bid_id, bid) -> bool:
+        if bid.nav_ptx_import_info is None:
+            return False
+        _, blinding_key, lock_value, nav_addr_redeem, nav_addr_refund, rescan_from, tx_data_funded_bytes = self._parseHtlcImportMsg(bid.nav_ptx_import_info)
+        secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
+        params = self._buildImportBlsctScriptParams(
+            nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key,
+        )
+        self.importBlsctScript(params, rescan_from)
+        self._sc.log.info(f"Imported NAV PTX HTLC script for bid {self._sc.log.id(bid_id)}")
+        ensure(tx_data_funded_bytes is not None, "NAV_PTX_IMPORT missing tx_data_funded")
+        fake_script = self.createFakeNonNavHTLCScript(secret_hash, lock_value)
+        bid.participate_tx.script = fake_script
+        bid.participate_tx.tx_data_funded = tx_data_funded_bytes
+        bid.nav_ptx_import_info = None
+        return True
 
     def initialiseWallet(self, key_bytes, restore_time: int = -1):
         del restore_time
@@ -888,8 +940,6 @@ class NAVInterface(BTCInterface):
     # Side: Bidder
     # Call Graph: update -> processMsg[NAV_ITX_IMPORT]
     def processNavItxImport(self, msg) -> None:
-        from basicswap import nav_logic
-
         msg_bytes = self._sc.getSmsgMsgBytes(msg)
         bid_id = msg_bytes[:28]
 
@@ -905,7 +955,7 @@ class NAVInterface(BTCInterface):
         # NAV_ITX_IMPORT may arrive after BID_ACCEPT; if initiate_tx already set, process immediately
         # rather than waiting for the next processBidAccept drain.
         if bid.initiate_tx is not None:
-            nav_logic.import_nav_itx_and_rescan_nav_chain(self._sc, bid_id, bid)
+            self.importItxAndRescanChain(bid_id, bid)
         self._sc.saveBid(bid_id, bid)
 
     # [MessageHandler: NAV_PTX_IMPORT]

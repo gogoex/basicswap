@@ -8718,7 +8718,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             )
             if coin_to == Coins.NAV:
                 if bid.participate_tx is not None and bid.participate_tx.script is None:
-                    if nav_logic.import_nav_ptx_and_apply_to_bid(self, bid_id, bid):
+                    if ci_to.importPtxAndApplyToBid(bid_id, bid):
                         save_bid = True
                 found = ci_to.tryToGetNavPtxInfoFromChain(bid, participate_txid)
             else:
@@ -11108,7 +11108,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 bid.nav_redeem_addr = bid_accept_data.nav_redeem_addr
 
         if Coins(offer.coin_from) == Coins.NAV:
-            nav_logic.import_nav_itx_and_rescan_nav_chain(self, bid_id, bid)
+            self.ci(Coins.NAV).importItxAndRescanChain(bid_id, bid)
 
         bid.setState(BidStates.BID_ACCEPTED)
         bid.setITxState(TxStates.TX_NONE)
