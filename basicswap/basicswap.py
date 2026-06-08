@@ -8783,7 +8783,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     save_bid = True
         elif state == BidStates.SWAP_PARTICIPATING:
             if coin_from == Coins.NAV or coin_to == Coins.NAV:
-                save_bid = nav_logic.handle_swap_participating(self, bid_id, bid, coin_from, coin_to)
+                save_bid = self.ci(Coins.NAV).handleSwapParticipating(bid_id, bid, coin_from, coin_to)
         elif state == BidStates.BID_ERROR:
             # Wait for user input
             pass

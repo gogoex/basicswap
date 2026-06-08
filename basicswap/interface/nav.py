@@ -9,8 +9,9 @@ from basicswap.interface.btc import (
     BTCInterface,
 )
 from basicswap.chainparams import Coins
+from basicswap.db import Concepts
 from typing import Optional, Any, TypedDict
-from basicswap.basicswap_util import ActionTypes, BidStates, MessageTypes, TxLockTypes, TxStates, TxTypes
+from basicswap.basicswap_util import ActionTypes, BidStates, EventLogTypes, MessageTypes, TxLockTypes, TxStates, TxTypes
 from basicswap.util import SerialiseNum, TemporaryError, b2i, ensure
 from basicswap.util.address import decodeWif
 from basicswap.util.crypto import sha256
@@ -568,6 +569,26 @@ class NAVInterface(BTCInterface):
         `getWalletKey(c, 1)` as the seed.
         """
         return self.rpc("getblsctseed")
+
+    # [checkBidState / SWAP_PARTICIPATING]
+    # Side: Bidder
+    # Call Graph: update -> checkBidState[SWAP_PARTICIPATING]
+    def handleSwapParticipating(self, bid_id, bid, coin_from, coin_to) -> bool:
+        # NAV HTLC outputs have no visible address; isHTLCTxnSpent polls via listblsctunspent.
+        # coin_from == NAV: ITX is NAV — check if ITX is spent to mark it TX_REDEEMED.
+        # coin_to == NAV: PTX is NAV — check if PTX is spent; distinguish refund vs redeem via PTX_REFUND_PUBLISHED event.
+        save_bid = False
+        if coin_from == Coins.NAV and bid.initiate_tx is not None:
+            if self.isHTLCTxnSpent(bid.initiate_tx.script):
+                bid.setITxState(TxStates.TX_REDEEMED)
+                save_bid = True
+        elif coin_to == Coins.NAV and bid.getPTxState() != TxStates.TX_REDEEMED:
+            if self.isHTLCTxnSpent(bid.participate_tx.script):
+                events = self._sc.getEvents(int(Concepts.BID), bid_id)
+                ptx_refund_published = any(e.event_type == int(EventLogTypes.PTX_REFUND_PUBLISHED) for e in events)
+                bid.setPTxState(TxStates.TX_REFUNDED if ptx_refund_published else TxStates.TX_REDEEMED)
+                save_bid = True
+        return save_bid
 
     def importBlsctScript(self, params: dict, rescan_from: None | int) -> dict:
         if rescan_from is not None:
