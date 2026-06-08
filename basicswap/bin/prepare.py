@@ -1505,12 +1505,12 @@ def prepareDataDir(coin, settings, chain, particl_mnemonic, extra_opts={}):
                     )
                 )
         elif coin == "navio":
-            fp.write("prune=4000\n")  # TODO NAV delete this
-            fp.write("fallbackfee=0.0002\n")  # TODO NAV delete this
-            fp.write("server=1\n")  # TODO NAV delete this
-            fp.write("listen=1\n")  # TODO NAV delete this
-            if chain == "testnet":
-                fp.write("addnode=testnet.nav.io\n")  # TODO NAV delete this
+            fp.write("prune=4000\n")
+            fp.write("fallbackfee=0.0002\n")
+            if chain == "testnet":  # TODO NAV delete this block upon making a pr
+                fp.write("server=1\n")
+                fp.write("listen=1\n")
+                fp.write("addnode=testnet.nav.io\n")
             if NAV_RPC_USER != "" and NAV_RPC_PWD != "":
                 fp.write(
                     "rpcauth={}:{}${}\n".format(
