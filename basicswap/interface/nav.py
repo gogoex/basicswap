@@ -477,7 +477,7 @@ class NAVInterface(BTCInterface):
             locktime_bytes = script[65:65 + push_size]
         return int.from_bytes(locktime_bytes, byteorder='little')
 
-    # TODO NAV remove this after verificationprogress issue is fixed
+    # Workaround: naviod reports a bad verificationprogress; recompute as blocks/headers. Remove once naviod fixes.
     # [getBlockchainInfo]
     # Side: Both
     # Call Graph: update -> getBlockchainInfo
