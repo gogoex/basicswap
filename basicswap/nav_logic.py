@@ -103,64 +103,6 @@ def create_initiate_txn(sc, bid_id, bid, offer, ci_from, locktime, secret_hash, 
 
     return txn, lock_tx_vout, nav_addr_redeem, nav_addr_refund, blinding_key
 
-# [createParticipateTxn]
-# Side: Bidder
-# Call Graph: update -> checkBidState[BID_ACCEPTED] -> initiateTxnConfirmed -> createParticipateTxn
-def create_nav_ptx(sc, bid_id, bid, offer, ci) -> tuple:
-    # Extract secret hash from ITX script and use offerer's nav address as redeem address and bidder's nav address as refund address
-    secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
-    nav_addr_redeem = bid.nav_redeem_addr
-    ensure(nav_addr_redeem is not None, "NAV redeem address not set; server must send nav_redeem_addr in BID_ACCEPT")
-    nav_addr_refund = sc.getReceiveAddressFromPool(Coins.NAV, bid_id, TxTypes.PTX_REFUND, None)
-
-    # Derive blinding key via ECDH (bidder_privkey, offerer_pubkey)
-    bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
-    bidder_privkey = sc.getContractPrivkey(bid_date, bid.contract_count)
-    lock_value = ci.getParticipateLockValue(offer)
-    blinding_key = ci.deriveBlindingKey(bidder_privkey, bid.offerer_contract_pubkey)
-    # Create funded PTX and PTX refund txn
-    txn_funded, vout_index = ci.createInitiateTxn(
-        nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key, bid.amount_to,
-    )
-    participate_script = ci.createFakeNonNavHTLCScript(secret_hash, lock_value)
-    refund_txn = sc.createRefundTxn(
-        Coins.NAV, txn_funded, offer, bid, participate_script,
-        addr_refund_out=nav_addr_refund, secret_hash=secret_hash, tx_type=TxTypes.PTX_REFUND,
-    )
-    bid.participate_txn_refund = bytes.fromhex(refund_txn)
-
-    # Sign PTX and get the txid
-    txn_signed = ci.signBlsct(txn_funded)
-    txjs = ci.rpc("decoderawtransaction", [txn_signed])
-    txid = txjs["txid"]
-
-    # Import HTLC script so wallet tracks the PTX output
-    params = _build_import_blsct_script_params(
-        nav_addr_redeem,
-        nav_addr_refund,
-        secret_hash,
-        lock_value,
-        blinding_key,
-    )
-    ci.importBlsctScript(params, None)
-
-    # Build NAV_PTX_IMPORT payload to send to offerer
-    chain_height = ci.getChainHeight()
-    nav_ptx_import_payload = _build_nav_htlc_import_payload(
-        MessageTypes.NAV_PTX_IMPORT, bid_id, blinding_key, lock_value,
-        nav_addr_redeem, nav_addr_refund, chain_height, txn_funded,
-    )
-
-    # Update bid participate_tx fields
-    sc.addParticipateTxn(bid_id, bid, Coins.NAV, txid, vout_index, chain_height)
-    bid.participate_tx.script = participate_script
-    bid.participate_tx.tx_data = bytes.fromhex(txn_signed)
-    bid.participate_tx.tx_data_funded = bytes.fromhex(txn_funded)
-    prevout_info = ci.getPrevOutInfoFromOffChainTxn(txn_funded, secret_hash)
-    bid.participate_tx.txid = bytes.fromhex(prevout_info["outid"])
-
-    return txn_signed, nav_ptx_import_payload
-
 # [getContractPrivkey]
 # Side: Both
 # Call Graph: various -> getContractPrivkey
@@ -377,7 +319,7 @@ def update_ptx_outid_and_state(sc, bid_id, bid, coin_to, ci_to, found) -> bool:
         save_bid = True
 
     # NAV txid changes after aggregation — track by outid instead
-    # Offerer: set txid from outid once known (bidder already has it from create_nav_ptx)
+    # Offerer: set txid from outid once known (bidder already has it from createParticipateTxn)
     if not bid.was_sent and bid.participate_tx.txid is None:
         outid = found.get("outid", None)
         if outid:

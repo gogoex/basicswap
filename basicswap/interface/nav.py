@@ -10,8 +10,8 @@ from basicswap.interface.btc import (
 )
 from basicswap.chainparams import Coins
 from typing import Optional, Any, TypedDict
-from basicswap.basicswap_util import BidStates, TxLockTypes, TxStates
-from basicswap.util import SerialiseNum, TemporaryError
+from basicswap.basicswap_util import BidStates, MessageTypes, TxLockTypes, TxStates, TxTypes
+from basicswap.util import SerialiseNum, TemporaryError, ensure
 from basicswap.util.crypto import sha256
 from coincurve.keys import PrivateKey
 import datetime as dt
@@ -161,6 +161,66 @@ class NAVInterface(BTCInterface):
 
         txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn, None, True])
         return txn_funded
+
+    # [createParticipateTxn]
+    # Side: Bidder
+    # Call Graph: update -> checkBidState[BID_ACCEPTED] -> initiateTxnConfirmed -> createParticipateTxn
+    def createParticipateTxn(self, bid_id, bid, offer) -> tuple:
+        from basicswap import nav_logic
+
+        # Extract secret hash from ITX script and use offerer's nav address as redeem address and bidder's nav address as refund address
+        secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
+        nav_addr_redeem = bid.nav_redeem_addr
+        ensure(nav_addr_redeem is not None, "NAV redeem address not set; server must send nav_redeem_addr in BID_ACCEPT")
+        nav_addr_refund = self._sc.getReceiveAddressFromPool(Coins.NAV, bid_id, TxTypes.PTX_REFUND, None)
+
+        # Derive blinding key via ECDH (bidder_privkey, offerer_pubkey)
+        bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
+        bidder_privkey = self._sc.getContractPrivkey(bid_date, bid.contract_count)
+        lock_value = self.getParticipateLockValue(offer)
+        blinding_key = self.deriveBlindingKey(bidder_privkey, bid.offerer_contract_pubkey)
+        # Create funded PTX and PTX refund txn
+        txn_funded, vout_index = self.createInitiateTxn(
+            nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key, bid.amount_to,
+        )
+        participate_script = self.createFakeNonNavHTLCScript(secret_hash, lock_value)
+        refund_txn = self._sc.createRefundTxn(
+            Coins.NAV, txn_funded, offer, bid, participate_script,
+            addr_refund_out=nav_addr_refund, secret_hash=secret_hash, tx_type=TxTypes.PTX_REFUND,
+        )
+        bid.participate_txn_refund = bytes.fromhex(refund_txn)
+
+        # Sign PTX and get the txid
+        txn_signed = self.signBlsct(txn_funded)
+        txjs = self.rpc("decoderawtransaction", [txn_signed])
+        txid = txjs["txid"]
+
+        # Import HTLC script so wallet tracks the PTX output
+        params = nav_logic._build_import_blsct_script_params(
+            nav_addr_redeem,
+            nav_addr_refund,
+            secret_hash,
+            lock_value,
+            blinding_key,
+        )
+        self.importBlsctScript(params, None)
+
+        # Build NAV_PTX_IMPORT payload to send to offerer
+        chain_height = self.getChainHeight()
+        nav_ptx_import_payload = nav_logic._build_nav_htlc_import_payload(
+            MessageTypes.NAV_PTX_IMPORT, bid_id, blinding_key, lock_value,
+            nav_addr_redeem, nav_addr_refund, chain_height, txn_funded,
+        )
+
+        # Update bid participate_tx fields
+        self._sc.addParticipateTxn(bid_id, bid, Coins.NAV, txid, vout_index, chain_height)
+        bid.participate_tx.script = participate_script
+        bid.participate_tx.tx_data = bytes.fromhex(txn_signed)
+        bid.participate_tx.tx_data_funded = bytes.fromhex(txn_funded)
+        prevout_info = self.getPrevOutInfoFromOffChainTxn(txn_funded, secret_hash)
+        bid.participate_tx.txid = bytes.fromhex(prevout_info["outid"])
+
+        return txn_signed, nav_ptx_import_payload
 
     def createRawFundedTransaction(
         self,

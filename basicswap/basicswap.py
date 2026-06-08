@@ -7092,7 +7092,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             )
 
         if coin_to == Coins.NAV:
-            return nav_logic.create_nav_ptx(self, bid_id, bid, offer, ci)
+            return ci.createParticipateTxn(bid_id, bid, offer)
 
         if ci.using_segwit():
             p2wsh = ci.getScriptDest(participate_script)
