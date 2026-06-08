@@ -10,10 +10,11 @@ from basicswap.interface.btc import (
 )
 from basicswap.chainparams import Coins
 from typing import Optional, Any, TypedDict
-from basicswap.basicswap_util import TxLockTypes
+from basicswap.basicswap_util import BidStates, TxLockTypes, TxStates
 from basicswap.util import SerialiseNum, TemporaryError
 from basicswap.util.crypto import sha256
 from coincurve.keys import PrivateKey
+import datetime as dt
 import basicswap.protocols.atomic_swap_1 as atomic_swap_1
 
 class PrevOutInfo(TypedDict):
@@ -28,6 +29,52 @@ class NAVInterface(BTCInterface):
     @staticmethod
     def coin_type() -> Coins: # type: ignore[override]
         return Coins.NAV
+
+    # [createRedeemTxn]
+    # Side: Both
+    # Call Graph: Bidder: checkQueuedActions[REDEEM_ITX] -> redeemITx -> createRedeemTxn | Offerer: checkBidState[SWAP_INITIATED] -> participateTxnConfirmed -> createRedeemTxn
+    def build_nav_redeem_prevout(self, bid, nav_txn, privkey, txn_script, is_ptx) -> dict:
+        secret_hash = atomic_swap_1.extractScriptSecretHash(txn_script)
+        tx_data_funded = nav_txn.tx_data_funded
+
+        # Try to reload tx_data_funded from DB if lost from memory (e.g. after restart)
+        if tx_data_funded is None:
+            self._sc.log.warning(f"createRedeemTxn: {'PTx' if is_ptx else 'ITx'} tx_data_funded not in memory for bid {self._sc.log.id(bid.bid_id)}, reloading from DB")
+            db_bid = self._sc.getBid(bid.bid_id)
+            db_tx = db_bid.participate_tx if (db_bid and is_ptx) else (db_bid.initiate_tx if db_bid else None)
+            if db_tx:
+                tx_data_funded = db_tx.tx_data_funded
+            else:
+                raise ValueError(f"NAV {'PTX' if is_ptx else 'ITX'} tx_data_funded not available for bid {bid.bid_id.hex()}")
+
+        prevout = self.getPrevOutInfoFromOffChainTxn(tx_data_funded.hex(), secret_hash)
+        if nav_txn.txid is not None:
+            # outid has been stored as txid
+            prevout["outid"] = nav_txn.txid.hex()
+
+        ecdh_pubkey = bid.bidder_contract_pubkey if bid.was_received else bid.offerer_contract_pubkey
+        blinding_key_int = self.deriveBlindingKey(privkey, ecdh_pubkey)
+        prevout["spending_key"] = self.deriveSpendingKey(
+            f"{blinding_key_int:064x}", bid.nav_redeem_addr
+        )
+        return prevout
+
+    # [createRefundTxn]
+    # Side: Both
+    # Call Graph: Bidder: createParticipateTxn -> createRefundTxn | Offerer: acceptBid -> createRefundTxn
+    def build_nav_refund_prevout(self, bid, txn, secret_hash, addr_refund_out) -> dict:
+        # Decodes funded tx via decodeblsctrawtransaction, finds the HTLC output matching secret_hash,
+        # returns {"outid", "amount", "gamma"}. No spending_key — caller must derive and set it.
+        prevout = self.getPrevOutInfoFromOffChainTxn(txn, secret_hash)
+
+        bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
+        local_privkey = self._sc.getContractPrivkey(bid_date, bid.contract_count)
+        ecdh_cpty_pubkey = bid.bidder_contract_pubkey if bid.was_received else bid.offerer_contract_pubkey
+        blinding_key_int = self.deriveBlindingKey(local_privkey, ecdh_cpty_pubkey)
+        prevout["spending_key"] = self.deriveSpendingKey(
+            f"{blinding_key_int:064x}", addr_refund_out
+        )
+        return prevout
 
     def checkExpectedSeed(self, expect_seedid: str) -> bool:
         RPC_WALLET_BLANK = -37
@@ -214,6 +261,21 @@ class NAVInterface(BTCInterface):
         # for txs before signing, use decodeblsctrawtransaction
         return self.rpc("decoderawtransaction", [tx_hex])
 
+    # [checkBidState / SWAP_INITIATED]
+    # Side: Bidder
+    # Call Graph: update -> checkBidState[SWAP_INITIATED]
+    def detect_nav_itx_refund(self, bid) -> bool:
+        # NAV ITX may be refunded while waiting for PTX confirmation.
+        # BLSCT outputs have no visible address, so check via isHTLCTxnSpent (listblsctunspent).
+        if (
+            bid.initiate_tx is not None
+            and bid.getITxState() in (TxStates.TX_SENT, TxStates.TX_CONFIRMED)
+            and self.isHTLCTxnSpent(bid.initiate_tx.script)
+        ):
+            self._sc.log.info(f"NAV ITx spent (refunded) in SWAP_INITIATED for bid {self._sc.log.id(bid.bid_id)}, marking TX_REFUNDED")
+            bid.setITxState(TxStates.TX_REFUNDED)
+            return True
+        return False
 
     def extractHTLCLockVal(self, script: bytes, is_nav: bool) -> int:
         if is_nav:
@@ -562,6 +624,38 @@ class NAVInterface(BTCInterface):
             self._log.error(f"Failed to check if HTLC txn is spent: {e}")
         return False
 
+    # [checkBidState]
+    # Side: Offerer
+    # Call Graph: update -> checkBidState
+    def is_initiate_txn_on_chain(self, bid) -> dict:
+        # Search by secret hash via listblsctunspent; BLSCT outputs have no visible address
+        secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
+        locktime = self.extractHTLCLockVal(bid.initiate_tx.script, is_nav=False)
+        return self.getNavLockTxHeight(
+            bid.initiate_tx.txid,
+            secret_hash.hex(),
+            bid.amount,
+            bid.chain_a_height_start,
+            lock_val=locktime,
+        )
+
+    # [checkBidState]
+    # Side: Offerer
+    # Call Graph: update -> checkBidState
+    def is_nav_itx_refunded(self, bid) -> bool:
+        # ITX was previously confirmed but UTXO gone — spent before re-detection, likely refunded
+        if (
+            bid.getITxState() == TxStates.TX_SENT
+            and bid.initiate_tx.conf is not None
+            and bid.initiate_tx.conf >= 1
+            and self.isHTLCTxnSpent(bid.initiate_tx.script)
+        ):
+            bid.setITxState(TxStates.TX_REFUNDED)
+            bid.setState(BidStates.SWAP_COMPLETED)
+            self._sc.saveBid(bid.bid_id, bid)
+            return True
+        return False
+
     def isTxNonFinalError(self, err_str: str) -> bool:
         # non-final-input: refund submitted before CLTV locktime expires
         # bad-inputs-unknown: refund input not in UTXO set; PTX still in mempool (BLSCT outputs unspendable until confirmed)
@@ -583,6 +677,22 @@ class NAVInterface(BTCInterface):
         signed_txn = self.rpc("signblsctrawtransaction", [txn])
         return signed_txn
 
+    # [checkBidState / SWAP_INITIATED]
+    # Side: Offerer
+    # Call Graph: update -> checkBidState[SWAP_INITIATED]
+    def try_to_get_nav_ptx_info_from_chain(self, bid, participate_txid):
+        # Search by secret hash via listblsctunspent; BLSCT outputs have no visible address
+        if bid.participate_tx is None or bid.participate_tx.script is None:
+            return None
+        secret_hash = atomic_swap_1.extractScriptSecretHash(bid.participate_tx.script)
+        lock_val = self.extractHTLCLockVal(bid.participate_tx.script, is_nav=False)
+        return self.getNavLockTxHeight(
+            participate_txid,
+            secret_hash.hex(),
+            bid.amount_to,
+            bid.chain_b_height_start,
+            lock_val=lock_val,
+        )
 
     def verifyProofOfFunds(self, address, signature, utxos, extra_commit_bytes):
         additional_commitment = extra_commit_bytes.hex()

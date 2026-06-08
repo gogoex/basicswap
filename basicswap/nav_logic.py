@@ -68,52 +68,6 @@ def _parse_nav_htlc_import_msg(msg_bytes):
         tx_data_funded_bytes = msg_bytes[offset: offset + tx_data_len]
     return bid_id, blinding_key, lock_value, nav_addr_redeem, nav_addr_refund, rescan_from, tx_data_funded_bytes
 
-# [createRedeemTxn]
-# Side: Both
-# Call Graph: Bidder: checkQueuedActions[REDEEM_ITX] -> redeemITx -> createRedeemTxn | Offerer: checkBidState[SWAP_INITIATED] -> participateTxnConfirmed -> createRedeemTxn
-def build_nav_redeem_prevout(sc, bid, ci, nav_txn, privkey, txn_script, is_ptx) -> dict:
-    secret_hash = atomic_swap_1.extractScriptSecretHash(txn_script)
-    tx_data_funded = nav_txn.tx_data_funded
-
-    # Try to reload tx_data_funded from DB if lost from memory (e.g. after restart)
-    if tx_data_funded is None:
-        sc.log.warning(f"createRedeemTxn: {'PTx' if is_ptx else 'ITx'} tx_data_funded not in memory for bid {sc.log.id(bid.bid_id)}, reloading from DB")
-        db_bid = sc.getBid(bid.bid_id)
-        db_tx = db_bid.participate_tx if (db_bid and is_ptx) else (db_bid.initiate_tx if db_bid else None)
-        if db_tx:
-            tx_data_funded = db_tx.tx_data_funded
-        else:
-            raise ValueError(f"NAV {'PTX' if is_ptx else 'ITX'} tx_data_funded not available for bid {bid.bid_id.hex()}")
-
-    prevout = ci.getPrevOutInfoFromOffChainTxn(tx_data_funded.hex(), secret_hash)
-    if nav_txn.txid is not None:
-        # outid has been stored as txid
-        prevout["outid"] = nav_txn.txid.hex()
-
-    ecdh_pubkey = bid.bidder_contract_pubkey if bid.was_received else bid.offerer_contract_pubkey
-    blinding_key_int = ci.deriveBlindingKey(privkey, ecdh_pubkey)
-    prevout["spending_key"] = ci.deriveSpendingKey(
-        f"{blinding_key_int:064x}", bid.nav_redeem_addr
-    )
-    return prevout
-
-# [createRefundTxn]
-# Side: Both
-# Call Graph: Bidder: createParticipateTxn -> createRefundTxn | Offerer: acceptBid -> createRefundTxn
-def build_nav_refund_prevout(sc, bid, ci, txn, secret_hash, addr_refund_out) -> dict:
-    # Decodes funded tx via decodeblsctrawtransaction, finds the HTLC output matching secret_hash,
-    # returns {"outid", "amount", "gamma"}. No spending_key — caller must derive and set it.
-    prevout = ci.getPrevOutInfoFromOffChainTxn(txn, secret_hash)
-
-    bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
-    local_privkey = sc.getContractPrivkey(bid_date, bid.contract_count)
-    ecdh_cpty_pubkey = bid.bidder_contract_pubkey if bid.was_received else bid.offerer_contract_pubkey
-    blinding_key_int = ci.deriveBlindingKey(local_privkey, ecdh_cpty_pubkey)
-    prevout["spending_key"] = ci.deriveSpendingKey(
-        f"{blinding_key_int:064x}", addr_refund_out
-    )
-    return prevout
-
 # [checkCoinsReady]
 # Side: Both
 # Call Graph: Bidder: postBid -> checkCoinsReady | Offerer: acceptBid -> checkCoinsReady
@@ -228,22 +182,6 @@ def derive_bls_key(sc, coin_type, evkey, key_path_base) -> bytes:
         if nonce > 0x7FFFFFFF:
             raise ValueError("deriveBLSKey failed")
 
-# [checkBidState / SWAP_INITIATED]
-# Side: Bidder
-# Call Graph: update -> checkBidState[SWAP_INITIATED]
-def detect_nav_itx_refund(sc, bid_id, bid, ci_from) -> bool:
-    # NAV ITX may be refunded while waiting for PTX confirmation.
-    # BLSCT outputs have no visible address, so check via isHTLCTxnSpent (listblsctunspent).
-    if (
-        bid.initiate_tx is not None
-        and bid.getITxState() in (TxStates.TX_SENT, TxStates.TX_CONFIRMED)
-        and ci_from.isHTLCTxnSpent(bid.initiate_tx.script)
-    ):
-        sc.log.info(f"NAV ITx spent (refunded) in SWAP_INITIATED for bid {sc.log.id(bid_id)}, marking TX_REFUNDED")
-        bid.setITxState(TxStates.TX_REFUNDED)
-        return True
-    return False
-
 # [checkBidState / SWAP_PARTICIPATING]
 # Side: Bidder
 # Call Graph: update -> checkBidState[SWAP_PARTICIPATING]
@@ -324,38 +262,6 @@ def import_nav_itx_and_rescan_nav_chain(sc, bid_id, bid) -> None:
     ensure(bid.initiate_tx.tx_data_funded is None, "NAV ITX tx_data_funded already set")
     bid.initiate_tx.tx_data_funded = tx_data_funded_bytes
     bid.nav_itx_import_info = None
-
-# [checkBidState]
-# Side: Offerer
-# Call Graph: update -> checkBidState
-def is_initiate_txn_on_chain(sc, bid_id, bid, ci_from) -> dict:
-    # Search by secret hash via listblsctunspent; BLSCT outputs have no visible address
-    secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
-    locktime = ci_from.extractHTLCLockVal(bid.initiate_tx.script, is_nav=False)
-    return ci_from.getNavLockTxHeight(
-        bid.initiate_tx.txid,
-        secret_hash.hex(),
-        bid.amount,
-        bid.chain_a_height_start,
-        lock_val=locktime,
-    )
-
-# [checkBidState]
-# Side: Offerer
-# Call Graph: update -> checkBidState
-def is_nav_itx_refunded(sc, bid_id, bid, ci_from) -> bool:
-    # ITX was previously confirmed but UTXO gone — spent before re-detection, likely refunded
-    if (
-        bid.getITxState() == TxStates.TX_SENT
-        and bid.initiate_tx.conf is not None
-        and bid.initiate_tx.conf >= 1
-        and ci_from.isHTLCTxnSpent(bid.initiate_tx.script)
-    ):
-        bid.setITxState(TxStates.TX_REFUNDED)
-        bid.setState(BidStates.SWAP_COMPLETED)
-        sc.saveBid(bid_id, bid)
-        return True
-    return False
 
 # [checkBidState / SWAP_INITIATED]
 # Side: Offerer
@@ -461,23 +367,6 @@ def send_nav_secret_reveal(sc, bid_id, bid, offer) -> None:
     secret = sc.getContractSecret(bid_date, bid.contract_count)
     payload_hex = str.format("{:02x}", MessageTypes.NAV_SECRET_REVEAL) + bid_id.hex() + secret.hex()
     sc.sendMessage(offer.addr_from, bid.bid_addr, payload_hex, sc.SMSG_SECONDS_IN_HOUR, None)
-
-# [checkBidState / SWAP_INITIATED]
-# Side: Offerer
-# Call Graph: update -> checkBidState[SWAP_INITIATED]
-def try_to_get_nav_ptx_info_from_chain(sc, bid_id, bid, ci_to, participate_txid):
-    # Search by secret hash via listblsctunspent; BLSCT outputs have no visible address
-    if bid.participate_tx is None or bid.participate_tx.script is None:
-        return None
-    secret_hash = atomic_swap_1.extractScriptSecretHash(bid.participate_tx.script)
-    lock_val = ci_to.extractHTLCLockVal(bid.participate_tx.script, is_nav=False)
-    return ci_to.getNavLockTxHeight(
-        participate_txid,
-        secret_hash.hex(),
-        bid.amount_to,
-        bid.chain_b_height_start,
-        lock_val=lock_val,
-    )
 
 # [checkBidState / SWAP_INITIATED]
 # Side: Offerer
