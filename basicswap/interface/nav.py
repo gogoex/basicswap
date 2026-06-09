@@ -632,6 +632,14 @@ class NAVInterface(BTCInterface):
     def getSeedHash(self, seed: bytes) -> bytes:
         return seed
 
+    # [_isScriptRefundMature]
+    # Side: Both
+    # Call Graph: checkBidState -> _isScriptRefundMature -> getTxLocktime
+    def getTxLocktime(self, tx_data) -> int:
+        # tx_data is the initiate (HTLC) tx for NAV; the BLSCT refund tx can't be
+        # deserialised by the BTC parser, so read the CLTV value from the HTLC script.
+        return self.extractHTLCLockVal(tx_data.script, is_nav=False)
+
     # [getWalletInfo]
     # Side: Both
     # Call Graph: getWalletInfo | updateWalletInfo | confirmWalletMinimumBalance -> getWalletInfo

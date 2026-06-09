@@ -2877,7 +2877,7 @@ def main():
             "datadir": os.getenv("NAV_DATA_DIR", os.path.join(data_dir, "navio")),
             "bindir": os.path.join(bin_dir, "navio"),
             "use_segwit": False,
-            "use_csv": True,
+            "use_csv": False,
             "blocks_confirmed": 1,
             "conf_target": 2,
             "core_version_no": getKnownVersion("navio"),
