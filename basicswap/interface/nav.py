@@ -564,6 +564,7 @@ class NAVInterface(BTCInterface):
                         "depth": confirmations,
                         "height": block_height,
                         "outid": utxo.get("outid", None) or utxo.get("outputHash", ""),
+                        "value": int(round(utxo.get("amount", 0) * 100_000_000)),
                     }
                     self._log.info(f"getNavLockTxHeight found HTLC via listblsctunspent: {rv}")
                     return rv

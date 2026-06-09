@@ -8708,7 +8708,15 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 self.saveBid(bid_id, bid)
                 return True  # Mark bid for archiving
         elif state == BidStates.SWAP_INITIATED:
-            # Waiting for participate txn to be confirmed in 'to' chain
+            if coin_to != Coins.NAV:
+                # Waiting for participate txn to be confirmed in 'to' chain
+                if ci_to.using_segwit():
+                    p2wsh = ci_to.getScriptDest(bid.participate_tx.script)
+                    addr = ci_to.encodeScriptDest(p2wsh)
+                else:
+                    addr = ci_to.encode_p2sh(bid.participate_tx.script)
+
+            ci_to = self.ci(coin_to)
             participate_txid = (
                 None
                 if bid.participate_tx is None or bid.participate_tx.txid is None
@@ -8725,11 +8733,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                         save_bid = True
                 found = ci_to.tryToGetNavPtxInfoFromChain(bid, participate_txid)
             else:
-                if ci_to.using_segwit():
-                    p2wsh = ci_to.getScriptDest(bid.participate_tx.script)
-                    addr = ci_to.encodeScriptDest(p2wsh)
-                else:
-                    addr = ci_to.encode_p2sh(bid.participate_tx.script)
                 found = ci_to.getLockTxHeight(
                     participate_txid,
                     addr,
@@ -8739,6 +8742,21 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     vout=participate_txvout,
                 )
             if found:
+                participate_txid_hex: str = found.get(
+                    "txid",
+                    None if participate_txid is None else participate_txid.hex(),
+                )
+                # Double check value
+                txo_value: int = found.get("value", None)
+                if (
+                    txo_value != bid.amount_to
+                    and bid.debug_ind != DebugTypes.MAKE_INVALID_PTX
+                ):
+                    self.setBidError(
+                        bid,
+                        f"Incorrect output amount in participate txn {self.logIDT(participate_txid_hex)}: {txo_value} != {bid.amount_to}",
+                    )
+                    return True
                 if coin_to == Coins.NAV:
                     save_bid = ci_to.updatePtxOutidAndState(bid, coin_to, found)
                 else:
@@ -8749,22 +8767,25 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                         bid.participate_tx.conf is None
                         and bid.participate_tx.state != TxStates.TX_SENT
                     ):
-                        txid = found.get(
-                            "txid",
-                            None if participate_txid is None else participate_txid.hex(),
-                        )
                         self.log.debug(
-                            f"Found bid {self.log.id(bid_id)} participate txn {self.log.id(txid)} in chain {ci_to.coin_name()}."
+                            f"Found bid {self.log.id(bid_id)} participate txn {self.logIDT(participate_txid_hex)} in chain {ci_to.coin_name()}."
                         )
                         self.addParticipateTxn(
-                            bid_id, bid, coin_to, txid, index, found["height"]
+                            bid_id,
+                            bid,
+                            coin_to,
+                            participate_txid_hex,
+                            index,
+                            found["height"],
                         )
+
                         # Only update tx state if tx hasn't already been seen
                         if (
                             bid.participate_tx.state is None
                             or bid.participate_tx.state < TxStates.TX_SENT
                         ):
                             bid.setPTxState(TxStates.TX_SENT)
+
                 bid.participate_tx.conf = found["depth"]
                 if found["height"] > 0 and bid.participate_tx.block_height is None:
                     self.setTxBlockInfoFromHeight(
