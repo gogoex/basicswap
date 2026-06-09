@@ -8627,28 +8627,31 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     )
                 index = None
                 if found:
-                    if "index" not in found:
-                        self.setBidError(
-                            bid,
-                            f"Swap output index not found for initiate txn {self.logIDT(initiate_txnid_hex)}",
-                        )
-                        return True
-                    txo_value: int = found.get("value", None)
-                    if txo_value != bid.amount:
-                        self.setBidError(
-                            bid,
-                            f"Incorrect output amount in initiate txn {self.logIDT(initiate_txnid_hex)}: {txo_value} != {bid.amount}",
-                        )
-                        return True
-                    bid.initiate_tx.conf = found["depth"]
-                    index = found["index"]
-                    tx_height = found["height"]
                     if coin_from == Coins.NAV:
+                        bid.initiate_tx.conf = found["depth"]
+                        tx_height = found["height"]
                         outid = found.get("outid", None)
                         if outid:
                             # NAV txid changes after aggregation; track by outid (stable output ID) instead
                             bid.initiate_tx.txid = bytes.fromhex(outid)
                             save_bid = True
+                    else:
+                        if "index" not in found:
+                            self.setBidError(
+                                bid,
+                                f"Swap output index not found for initiate txn {self.logIDT(initiate_txnid_hex)}",
+                            )
+                            return True
+                        txo_value: int = found.get("value", None)
+                        if txo_value != bid.amount:
+                            self.setBidError(
+                                bid,
+                                f"Incorrect output amount in initiate txn {self.logIDT(initiate_txnid_hex)}: {txo_value} != {bid.amount}",
+                            )
+                            return True
+                        bid.initiate_tx.conf = found["depth"]
+                        index = found["index"]
+                        tx_height = found["height"]
                 elif coin_from == Coins.NAV and ci_from.isNavItxRefunded(bid):
                     return True
 
