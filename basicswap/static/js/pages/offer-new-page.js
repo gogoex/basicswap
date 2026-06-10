@@ -579,12 +579,7 @@ function initializeApp() {
         });
 
         DOM.addEvent(id, 'input', function() {
-            // When rate is locked, suppress as-you-type recalc; the 'change'
-            // (blur) handler recalculates once the full value is entered.
-            const rateLock = document.getElementById('rate_lock');
-            if (rateLock && !rateLock.checked) {
-                RateManager.setRate(id);
-            }
+            RateManager.setRate(id);
         });
     });
 
