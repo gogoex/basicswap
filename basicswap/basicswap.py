@@ -7094,9 +7094,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 None,
             )
 
-        if coin_to == Coins.NAV:
-            return ci.createParticipateTxn(bid_id, bid, offer)
-
         if ci.using_segwit():
             p2wsh = ci.getScriptDest(participate_script)
             addr_to = ci.encodeScriptDest(p2wsh)
@@ -7127,7 +7124,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         bid.participate_tx.script = participate_script
         bid.participate_tx.tx_data = bytes.fromhex(txn_signed)
 
-        return txn_signed, None
+        return txn_signed
 
     def createRedeemTxn(
         self,
@@ -7495,10 +7492,17 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 )
 
                 ci_to = self.ci(offer.coin_to)
-                txn, nav_ptx_import_payload = self.createParticipateTxn(bid_id, bid, offer, participate_script)
                 if Coins(offer.coin_to) == Coins.NAV:
-                    ci_to.publishPtxAndSendImportMsg(bid_id, bid, offer, txn, nav_ptx_import_payload)
+                    txn, nav_ptx_import_payload = ci_to.createParticipateTxn(
+                        bid_id, bid, offer
+                    )
+                    ci_to.publishPtxAndSendImportMsg(
+                        bid_id, bid, offer, txn, nav_ptx_import_payload
+                    )
                 else:
+                    txn = self.createParticipateTxn(
+                        bid_id, bid, offer, participate_script
+                    )
                     txid = ci_to.publishTx(bytes.fromhex(txn))
                     self.log.debug(
                         f"Submitted participate tx {self.logIDT(txid)} to {ci_to.coin_name()} chain for bid {self.log.id(bid_id)}"
