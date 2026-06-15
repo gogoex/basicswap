@@ -12,7 +12,7 @@ from basicswap.chainparams import Coins
 from basicswap.db import Concepts
 from typing import Optional, Any, TypedDict
 from basicswap.basicswap_util import ActionTypes, BidStates, EventLogTypes, MessageTypes, TxLockTypes, TxStates, TxTypes
-from basicswap.util import SerialiseNum, TemporaryError, b2i, ensure
+from basicswap.util import DeserialiseNum, SerialiseNum, TemporaryError, b2i, ensure
 from basicswap.util.address import decodeWif
 from basicswap.util.crypto import sha256
 from coincurve.keys import PrivateKey
@@ -333,6 +333,72 @@ class NAVInterface(BTCInterface):
                 )
 
         return redeem_txn
+
+    # [createNavRefundTxn]
+    # Side: Both
+    # Call Graph: acceptBid / createParticipateTxn -> createRefundTxn (NAV early-return) -> createNavRefundTxn
+    def createNavRefundTxn(
+        self,
+        txn,
+        offer,
+        bid,
+        txn_script: bytearray,
+        addr_refund_out=None,
+        tx_type=TxTypes.ITX_REFUND,
+        cursor=None,
+        secret_hash: bytes | None = None,
+    ) -> str:
+        self._sc.log.debug(f"createNavRefundTxn for bid {self._sc.log.id(bid.bid_id)}")
+
+        prevout = self.buildNavRefundPrevout(bid, txn, secret_hash, addr_refund_out)
+
+        lock_value = DeserialiseNum(txn_script, 64)
+        sequence: int = 1
+        if offer.lock_type < TxLockTypes.ABS_LOCK_BLOCKS:
+            sequence = lock_value
+
+        fee_rate, fee_src = self._sc.getFeeRateForCoin(Coins.NAV)
+        tx_vsize = self.getHTLCSpendTxVSize(False)
+        tx_fee = (fee_rate * tx_vsize) / 1000
+        self._sc.log.debug(
+            f"Refund tx fee {self.format_amount(tx_fee, conv_int=True, r=1)}, rate {fee_rate}"
+        )
+
+        amount_out = self.make_int(prevout["amount"], r=1) - self.make_int(tx_fee, r=1)
+        if amount_out <= 0:
+            raise ValueError("Refund amount out <= 0")
+
+        if addr_refund_out is None:
+            addr_refund_out = self._sc.getReceiveAddressFromPool(
+                Coins.NAV, bid.bid_id, tx_type, cursor
+            )
+        ensure(addr_refund_out is not None, "addr_refund_out is null")
+        self._sc.log.debug(f"addr_refund_out {addr_refund_out}")
+
+        locktime: int = 0
+        if offer.lock_type in (
+            TxLockTypes.ABS_LOCK_BLOCKS,
+            TxLockTypes.ABS_LOCK_TIME,
+        ):
+            locktime = lock_value
+
+        refund_txn = self.createRefundTxn(
+            prevout, addr_refund_out, amount_out, locktime, sequence, txn_script
+        )
+        # signBlsct validates internally; NAV prevout fields (outid, spending_key)
+        # are incompatible with verifyRawTransaction
+        refund_txn = self.signBlsct(refund_txn)
+
+        if self._sc.debug and self.get_connection_type() == "rpc":
+            refund_txjs = self.rpc("decoderawtransaction", [refund_txn])
+            prev_outid = (refund_txjs.get("vin") or [{}])[0].get("outid")
+            refund_outid = (refund_txjs.get("vout") or [{}])[0].get("hash")
+            if prev_outid and refund_outid:
+                self._sc.log.debug(
+                    f"Have valid refund tx {self._sc.log.id(refund_outid)} for contract tx {self._sc.log.id(prev_outid)}"
+                )
+
+        return refund_txn
 
     # [createParticipateTxn]
     # Side: Bidder
