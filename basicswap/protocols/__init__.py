@@ -1,4 +1,4 @@
-# -* coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 
 # Copyright (c) 2022-2023 tecnovert
 # Distributed under the MIT software license, see the accompanying
