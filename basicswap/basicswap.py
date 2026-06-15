@@ -7141,10 +7141,13 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         self.log.debug(f"createRedeemTxn for coin {Coins(coin_type).name}")
         ci = self.ci(coin_type)
 
+        if coin_type == Coins.NAV:
+            return ci.createNavRedeemTxn(
+                bid, for_txn_type, addr_redeem_out, fee_rate, cursor
+            )
+
         if for_txn_type == "participate":
-            # For NAV, txid may be None until the on-chain outid is resolved via listblsctunspent;
-            # prev_txnid is not used in the NAV branch so a None value is safe there.
-            prev_txnid = bid.participate_tx.txid.hex() if bid.participate_tx.txid is not None else None
+            prev_txnid = bid.participate_tx.txid.hex()
             prev_n = bid.participate_tx.vout
             txn_script = bid.participate_tx.script
             prev_amount = bid.amount_to
@@ -7160,21 +7163,17 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         else:
             script_pub_key = ci.get_p2sh_script_pubkey(txn_script).hex()
 
+        prevout = {
+            "txid": prev_txnid,
+            "vout": prev_n,
+            "scriptPubKey": script_pub_key,
+            "redeemScript": txn_script.hex(),
+            "amount": ci.format_amount(prev_amount),
+        }
+
         bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
         privkey = self.getContractPrivkey(bid_date, bid.contract_count)
         pubkey = ci.getPubkey(privkey)
-
-        if coin_type == Coins.NAV:
-            nav_txn, is_ptx = (bid.participate_tx, True) if for_txn_type == "participate" else (bid.initiate_tx, False)
-            prevout = ci.buildNavRedeemPrevout(bid, nav_txn, privkey, txn_script, is_ptx)
-        else:
-            prevout = {
-                "txid": prev_txnid,
-                "vout": prev_n,
-                "scriptPubKey": script_pub_key,
-                "redeemScript": txn_script.hex(),
-                "amount": ci.format_amount(prev_amount),
-            }
 
         secret = bid.recovered_secret
         if secret is None:
@@ -7212,9 +7211,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         self.log.debug(f"addr_redeem_out {addr_redeem_out}")
 
-        if coin_type == Coins.NAV:
-            txn_script = b'\x20' + secret + b'\x51'
-
         redeem_txn = ci.createRedeemTxn(
             prevout, addr_redeem_out, amount_out, txn_script
         )
@@ -7222,54 +7218,45 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         if ci.using_segwit():
             options["force_segwit"] = True
 
-        if coin_type == Coins.NAV:
-            redeem_txn = ci.signBlsct(redeem_txn)
+        if coin_type in (Coins.NAV, Coins.DCR):
+            privkey_wif = self.ci(coin_type).encodeKey(privkey)
+            redeem_sig = ci.getTxSignature(redeem_txn, prevout, privkey_wif)
         else:
-            if coin_type in (Coins.DCR,):
-                privkey_wif = self.ci(coin_type).encodeKey(privkey)
-                redeem_sig = ci.getTxSignature(redeem_txn, prevout, privkey_wif)
-            else:
-                privkey_wif = self.ci(Coins.PART).encodeKey(privkey)
-                redeem_sig = self.callcoinrpc(
-                    Coins.PART,
-                    "createsignaturewithkey",
-                    [redeem_txn, prevout, privkey_wif, "ALL", options],
-                )
+            privkey_wif = self.ci(Coins.PART).encodeKey(privkey)
+            redeem_sig = self.callcoinrpc(
+                Coins.PART,
+                "createsignaturewithkey",
+                [redeem_txn, prevout, privkey_wif, "ALL", options],
+            )
 
-            if coin_type == Coins.PART or ci.using_segwit():
-                witness_stack = [
-                    bytes.fromhex(redeem_sig),
-                    pubkey,
-                    secret,
-                    bytes((1,)),  # Converted to OP_1 in Decred push_script_data
-                    txn_script,
-                ]
-                redeem_txn = ci.setTxSignature(
-                    bytes.fromhex(redeem_txn), witness_stack
-                ).hex()
-            else:
-                script = (len(redeem_sig) // 2).to_bytes(1, "big") + bytes.fromhex(
-                    redeem_sig
-                )
-                script += (33).to_bytes(1, "big") + pubkey
-                script += (32).to_bytes(1, "big") + secret
-                script += (OpCodes.OP_1).to_bytes(1, "big")
-                script += (
-                    (OpCodes.OP_PUSHDATA1).to_bytes(1, "big")
-                    + (len(txn_script)).to_bytes(1, "big")
-                    + txn_script
-                )
-                redeem_txn = ci.setTxScriptSig(bytes.fromhex(redeem_txn), 0, script).hex()
+        if coin_type == Coins.PART or ci.using_segwit():
+            witness_stack = [
+                bytes.fromhex(redeem_sig),
+                pubkey,
+                secret,
+                bytes((1,)),  # Converted to OP_1 in Decred push_script_data
+                txn_script,
+            ]
+            redeem_txn = ci.setTxSignature(
+                bytes.fromhex(redeem_txn), witness_stack
+            ).hex()
+        else:
+            script = (len(redeem_sig) // 2).to_bytes(1, "big") + bytes.fromhex(
+                redeem_sig
+            )
+            script += (33).to_bytes(1, "big") + pubkey
+            script += (32).to_bytes(1, "big") + secret
+            script += (OpCodes.OP_1).to_bytes(1, "big")
+            script += (
+                (OpCodes.OP_PUSHDATA1).to_bytes(1, "big")
+                + (len(txn_script)).to_bytes(1, "big")
+                + txn_script
+            )
+            redeem_txn = ci.setTxScriptSig(bytes.fromhex(redeem_txn), 0, script).hex()
 
-        if coin_type in (Coins.DCR,):
+        if coin_type in (Coins.NAV, Coins.DCR):
             # Only checks signature
             ro = ci.verifyRawTransaction(redeem_txn, [prevout])
-        elif coin_type == Coins.NAV:
-            # signBlsct validates internally; NAV-specific prevout fields (outid, spending_key) are incompatible with verifyRawTransaction
-            ro = {
-                "inputs_valid": True,
-                "validscripts": 1,
-            }
         else:
             ro = self.callcoinrpc(
                 Coins.PART, "verifyrawtransaction", [redeem_txn, [prevout]]
@@ -7290,9 +7277,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     txsize = len(redeem_txn) // 2
                     self.log.debug(f"size paid, actual size {tx_vsize} {txsize}")
                     ensure(tx_vsize >= txsize, "underpaid fee")
-                elif coin_type == Coins.NAV:
-                    # signBlsct embeds fee internally; getHTLCSpendTxVSize estimate unreliable for BLSCT
-                    pass
                 elif ci.use_tx_vsize():
                     self.log.debug(
                         "vsize paid, actual vsize %d %d", tx_vsize, redeem_txjs["vsize"]
@@ -7304,19 +7288,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     )
                     ensure(tx_vsize >= redeem_txjs["size"], "underpaid fee")
 
-                if coin_type == Coins.NAV:
-                    prev_outid = (redeem_txjs.get("vin") or [{}])[0].get("outid")
-                    redeem_outid = (redeem_txjs.get("vout") or [{}])[0].get("hash")
-                    if prev_outid and redeem_outid:
-                        self.log.debug(
-                            f"Have valid redeem tx {self.log.id(redeem_outid)} for contract {for_txn_type} tx {self.log.id(prev_outid)}"
-                        )
-
-            if coin_type != Coins.NAV:
-                redeem_txid = ci.getTxid(bytes.fromhex(redeem_txn))
-                self.log.debug(
-                    f"Have valid redeem tx {self.log.id(redeem_txid)} for contract {for_txn_type} tx {self.log.id(prev_txnid)}"
-                )
+            redeem_txid = ci.getTxid(bytes.fromhex(redeem_txn))
+            self.log.debug(
+                f"Have valid redeem tx {self.log.id(redeem_txid)} for contract {for_txn_type} tx {self.log.id(prev_txnid)}"
+            )
         return redeem_txn
 
     def createRefundTxn(

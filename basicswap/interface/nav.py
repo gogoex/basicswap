@@ -250,6 +250,90 @@ class NAVInterface(BTCInterface):
         txn_funded = self.rpc_wallet("fundblsctrawtransaction", [txn, None, True])
         return txn_funded
 
+    # [createNavRedeemTxn]
+    # Side: Both
+    # Call Graph: checkBidState -> createRedeemTxn (NAV early-return) -> createNavRedeemTxn
+    def createNavRedeemTxn(
+        self,
+        bid,
+        for_txn_type: str = "participate",
+        addr_redeem_out=None,
+        fee_rate=None,
+        cursor=None,
+    ) -> str:
+        self._sc.log.debug(f"createNavRedeemTxn for bid {self._sc.log.id(bid.bid_id)}")
+
+        if for_txn_type == "participate":
+            nav_txn = bid.participate_tx
+            is_ptx = True
+            prev_amount = bid.amount_to
+        else:
+            nav_txn = bid.initiate_tx
+            is_ptx = False
+            prev_amount = bid.amount
+        txn_script = nav_txn.script
+
+        bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
+        privkey = self._sc.getContractPrivkey(bid_date, bid.contract_count)
+        prevout = self.buildNavRedeemPrevout(bid, nav_txn, privkey, txn_script, is_ptx)
+
+        secret = bid.recovered_secret
+        if secret is None:
+            secret = self._sc.getContractSecret(bid_date, bid.contract_count)
+        ensure(len(secret) == 32, "Bad secret length")
+
+        if self._sc.coin_clients[Coins.NAV]["connection_type"] not in (
+            "rpc",
+            "electrum",
+        ):
+            return None
+
+        if fee_rate is None:
+            fee_rate, fee_src = self._sc.getFeeRateForCoin(Coins.NAV)
+
+        tx_vsize = self.getHTLCSpendTxVSize()
+        tx_fee = (fee_rate * tx_vsize) / 1000
+        self._sc.log.debug(
+            f"Redeem tx fee {self.format_amount(tx_fee, conv_int=True, r=1)}, rate {fee_rate}"
+        )
+
+        amount_out = prev_amount - self.make_int(tx_fee, r=1)
+        ensure(amount_out > 0, "Amount out <= 0")
+
+        if addr_redeem_out is None:
+            addr_redeem_out = self._sc.getReceiveAddressFromPool(
+                Coins.NAV,
+                bid.bid_id,
+                (
+                    TxTypes.PTX_REDEEM
+                    if for_txn_type == "participate"
+                    else TxTypes.ITX_REDEEM
+                ),
+                cursor,
+            )
+        assert addr_redeem_out is not None
+        self._sc.log.debug(f"addr_redeem_out {addr_redeem_out}")
+
+        # NAV redeem scriptSig pushes the secret then OP_1
+        redeem_script = b"\x20" + secret + b"\x51"
+        redeem_txn = self.createRedeemTxn(
+            prevout, addr_redeem_out, amount_out, redeem_script
+        )
+        # signBlsct validates internally; NAV prevout fields (outid, spending_key)
+        # are incompatible with verifyRawTransaction
+        redeem_txn = self.signBlsct(redeem_txn)
+
+        if self._sc.debug and self.get_connection_type() == "rpc":
+            redeem_txjs = self.rpc("decoderawtransaction", [redeem_txn])
+            prev_outid = (redeem_txjs.get("vin") or [{}])[0].get("outid")
+            redeem_outid = (redeem_txjs.get("vout") or [{}])[0].get("hash")
+            if prev_outid and redeem_outid:
+                self._sc.log.debug(
+                    f"Have valid redeem tx {self._sc.log.id(redeem_outid)} for contract {for_txn_type} tx {self._sc.log.id(prev_outid)}"
+                )
+
+        return redeem_txn
+
     # [createParticipateTxn]
     # Side: Bidder
     # Call Graph: update -> checkBidState[BID_ACCEPTED] -> initiateTxnConfirmed -> createParticipateTxn
