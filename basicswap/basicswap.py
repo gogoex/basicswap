@@ -8513,11 +8513,11 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
     def _isScriptRefundMature(self, ci, offer, refund_tx_bytes, parent_tx) -> bool:
         if offer.lock_type in (TxLockTypes.ABS_LOCK_BLOCKS, TxLockTypes.ABS_LOCK_TIME):
-            # NAV reads the CLTV value from the HTLC script on the initiate tx,
-            # as its BLSCT refund tx can't be deserialised by the BTC parser.
-            tx_locktime: int = ci.getTxLocktime(
-                parent_tx if ci.coin_type() == Coins.NAV else refund_tx_bytes
-            )
+            if ci.coin_type() == Coins.NAV:
+                # NAV reads the CLTV value from the HTLC script on the initiate tx,
+                # as its BLSCT refund tx can't be deserialised by the BTC parser.
+                return ci.isAbsLockTimeMature(ci.getTxLocktime(parent_tx))
+            tx_locktime: int = ci.getTxLocktime(refund_tx_bytes)
             return ci.isAbsLockTimeMature(tx_locktime)
         if parent_tx is None or parent_tx.block_height is None:
             return False
@@ -8783,6 +8783,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         elif state == BidStates.SWAP_PARTICIPATING:
             if coin_from == Coins.NAV or coin_to == Coins.NAV:
                 save_bid = self.ci(Coins.NAV).handleSwapParticipating(bid_id, bid, coin_from, coin_to)
+            # Waiting for initiate txn spend
+            pass
         elif state == BidStates.BID_ERROR:
             # Wait for user input
             pass
