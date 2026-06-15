@@ -164,6 +164,7 @@ from .network.util import getMsgPubkey
 import basicswap.config as cfg
 import basicswap.network.network as bsn
 import basicswap.protocols.atomic_swap_1 as atomic_swap_1
+import basicswap.protocols.nav_swap_1 as nav_swap_1
 import basicswap.protocols.xmr_swap_1 as xmr_swap_1
 
 PROTOCOL_VERSION_SECRET_HASH = 5
@@ -401,6 +402,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
     protocolInterfaces = {
         SwapTypes.SELLER_FIRST: atomic_swap_1.AtomicSwapInterface(),
         SwapTypes.XMR_SWAP: xmr_swap_1.XmrSwapInterface(),
+        SwapTypes.NAV_SWAP: nav_swap_1.NavSwapInterface(),
     }
 
     def __init__(
@@ -3613,6 +3615,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 raise ValueError(
                     f"Invalid swap type for: {coin_from.name} -> {coin_to.name}"
                 )
+        elif swap_type == SwapTypes.NAV_SWAP:
+            pass  # NAV uses a secret-hash HTLC variant; adaptor-sig not supported
         else:
             if (
                 coin_from in self.adaptor_swap_only_coins
@@ -5320,7 +5324,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
             now: int = self.getTime()
             encoded_proof_utxos = None
-            if offer.swap_type == SwapTypes.SELLER_FIRST:
+            if offer.swap_type in (SwapTypes.SELLER_FIRST, SwapTypes.NAV_SWAP):
                 proof_addr, proof_sig, proof_utxos = self.getProofOfFunds(
                     coin_to, amount_to, offer_id
                 )
@@ -10436,7 +10440,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         )
         reverse_bid: bool = self.is_reverse_ads_bid(coin_from, coin_to)
 
-        if offer_data.swap_type == SwapTypes.SELLER_FIRST:
+        if offer_data.swap_type in (SwapTypes.SELLER_FIRST, SwapTypes.NAV_SWAP):
             ensure(
                 offer_data.protocol_version >= MINPROTO_VERSION_SECRET_HASH,
                 "Invalid protocol version",
@@ -10901,7 +10905,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         # assert (bid_data.rate != offer['data'].rate), 'Bid rate mismatch'
 
         swap_type = offer.swap_type
-        if swap_type == SwapTypes.SELLER_FIRST:
+        if swap_type in (SwapTypes.SELLER_FIRST, SwapTypes.NAV_SWAP):
             ensure(len(bid_data.pkhash_buyer) == 20, "Bad pkhash_buyer length")
 
             proof_utxos = ci_to.decodeProofUtxos(bid_data.proof_utxos)

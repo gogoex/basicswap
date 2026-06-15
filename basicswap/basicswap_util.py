@@ -88,6 +88,7 @@ class SwapTypes(IntEnum):
     BUYER_FIRST_2MSG = auto()
     XMR_SWAP = auto()
     XMR_BCH_SWAP = auto()
+    NAV_SWAP = auto()
 
 
 class OfferStates(IntEnum):
@@ -581,6 +582,8 @@ def strSwapType(swap_type) -> str:
         return "seller_first"
     if swap_type == SwapTypes.XMR_SWAP:
         return "xmr_swap"
+    if swap_type == SwapTypes.NAV_SWAP:
+        return "nav_swap"
     return None
 
 
@@ -589,6 +592,8 @@ def strSwapDesc(swap_type) -> str:
         return "Secret Hash"
     if swap_type == SwapTypes.XMR_SWAP:
         return "Adaptor Sig"
+    if swap_type == SwapTypes.NAV_SWAP:
+        return "Secret Hash"
     return None
 
 
