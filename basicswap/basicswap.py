@@ -3260,9 +3260,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             self.setStringKV(key_str, root_address)
             return
 
-        root_key = self.getWalletKey(
-            interface_type, 1, for_bls=(interface_type == Coins.NAV)
-        )
+        if interface_type != Coins.NAV:
+            root_key = self.getWalletKey(interface_type, 1)
+        else:
+            root_key = self.getWalletKeyBLS(interface_type, 1)
         try:
             ci.initialiseWallet(root_key, restore_time)
         except Exception as e:
@@ -4415,18 +4416,14 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             if nonce > 1000:
                 raise ValueError("grindForEd25519Key failed")
 
-    def getWalletKey(self, coin_type, key_num, for_ed25519=False, for_bls=False) -> bytes:
+    def getWalletKey(self, coin_type, key_num, for_ed25519=False) -> bytes:
         evkey = self.callcoinrpc(Coins.PART, "extkey", ["account", "default", "true"])[
             "evkey"
         ]
 
         key_path_base = "44445555h/1h/{}/{}".format(int(coin_type), key_num)
 
-        if for_bls:
-            return self.ci(coin_type).deriveBLSKey(evkey, key_path_base)
-        elif for_ed25519:
-            return self.grindForEd25519Key(coin_type, evkey, key_path_base)
-        else:
+        if not for_ed25519:
             extkey = self.callcoinrpc(
                 Coins.PART, "extkey", ["info", evkey, key_path_base]
             )["key_info"]["result"]
@@ -4435,6 +4432,15 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     "privkey"
                 ]
             )
+
+        return self.grindForEd25519Key(coin_type, evkey, key_path_base)
+
+    def getWalletKeyBLS(self, coin_type, key_num) -> bytes:
+        evkey = self.callcoinrpc(Coins.PART, "extkey", ["account", "default", "true"])[
+            "evkey"
+        ]
+        key_path_base = "44445555h/1h/{}/{}".format(int(coin_type), key_num)
+        return self.ci(coin_type).deriveBLSKey(evkey, key_path_base)
 
     def getPathKey(
         self,
@@ -4766,7 +4772,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 self.log.warning(
                     f"Setting seed ID for coin {ci.coin_name()} from master key."
                 )
-                root_key = self.getWalletKey(c, 1, for_bls=(c == Coins.NAV))
+                if c != Coins.NAV:
+                    root_key = self.getWalletKey(c, 1)
+                else:
+                    root_key = self.getWalletKeyBLS(c, 1)
                 self.storeSeedIDForCoin(root_key, c)
                 expect_seedid: str = self.getStringKV(seed_key)
             else:
@@ -8866,12 +8875,17 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                         f"Error trying to submit initiate refund txn: {ex}"
                     )
 
-        # TX_CONFIRMED is required in order for NAV PTX to be spendable
-        ptx_refund_states = (TxStates.TX_CONFIRMED,) if coin_to == Coins.NAV else (TxStates.TX_SENT, TxStates.TX_CONFIRMED)
-        should_try_refund_ptx: bool = (
-            bid.getPTxState() in ptx_refund_states
-            and bid.participate_txn_refund is not None
-        )
+        if coin_to != Coins.NAV:
+            should_try_refund_ptx: bool = (
+                bid.getPTxState() in (TxStates.TX_SENT, TxStates.TX_CONFIRMED)
+                and bid.participate_txn_refund is not None
+            )
+        else:
+            # NAV PTX is only spendable once confirmed (TX_SENT is not enough)
+            should_try_refund_ptx = (
+                bid.getPTxState() == TxStates.TX_CONFIRMED
+                and bid.participate_txn_refund is not None
+            )
         if (
             should_try_refund_ptx
             and bid.participate_tx is not None
