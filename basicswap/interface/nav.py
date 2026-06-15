@@ -9,7 +9,7 @@ from basicswap.interface.btc import (
     BTCInterface,
 )
 from basicswap.chainparams import Coins
-from basicswap.db import Concepts
+from basicswap.db import Concepts, SwapTx
 from typing import Optional, Any, TypedDict
 from basicswap.basicswap_util import ActionTypes, BidStates, EventLogTypes, MessageTypes, TxLockTypes, TxStates, TxTypes
 from basicswap.util import DeserialiseNum, SerialiseNum, TemporaryError, b2i, ensure
@@ -71,6 +71,75 @@ class NAVInterface(BTCInterface):
             "timelock_opcode": "cltv",
             "blinding_key": f"{blinding_key:064x}",
         }
+
+    # [acceptNavInitiate]
+    # Side: Offerer
+    # Call Graph: acceptBid (coin_from == NAV) -> acceptNavInitiate
+    def acceptNavInitiate(
+        self, bid_id, bid, offer, script, secret_hash, lock_value, bid_date, cursor
+    ) -> bytes:
+        (
+            txn,
+            lock_tx_vout,
+            nav_addr_redeem,
+            nav_addr_refund,
+            blinding_key,
+        ) = self.createInitiateTxn(bid_id, bid, lock_value, secret_hash, bid_date, cursor)
+
+        # Store the signed refund txn in case wallet is locked when refund is possible
+        refund_txn = self._sc.createRefundTxn(
+            Coins.NAV,
+            txn,
+            offer,
+            bid,
+            script,
+            addr_refund_out=nav_addr_refund,
+            cursor=cursor,
+            secret_hash=secret_hash,
+        )
+        bid.initiate_txn_refund = bytes.fromhex(refund_txn)
+
+        txn_funded = txn
+        txn = self.signBlsct(txn)
+        chain_height_before_submit = self.getChainHeight()
+
+        txid = self.publishTx(bytes.fromhex(txn))
+        self._sc.log.debug(
+            f"Submitted initiate txn {self._sc.logIDT(txid)} to {self.coin_name()} chain for bid {self._sc.log.id(bid_id)}",
+        )
+
+        self.importItxAndSendPayloadMsgToBidder(
+            bid_id,
+            bid,
+            offer,
+            nav_addr_redeem,
+            nav_addr_refund,
+            secret_hash,
+            lock_value,
+            blinding_key,
+            txn_funded,
+            chain_height_before_submit,
+            cursor,
+        )
+
+        bid.initiate_tx = SwapTx(
+            bid_id=bid_id,
+            tx_type=TxTypes.ITX,
+            txid=bytes.fromhex(txid),
+            vout=lock_tx_vout,
+            tx_data=bytes.fromhex(txn),
+            tx_data_funded=bytes.fromhex(txn_funded),
+            script=self.createFakeNonNavHTLCScript(secret_hash, lock_value),
+        )
+        bid.setITxState(TxStates.TX_SENT)
+        self._sc.logEvent(
+            Concepts.BID,
+            bid.bid_id,
+            EventLogTypes.ITX_PUBLISHED,
+            "",
+            cursor,
+        )
+        return txid
 
     # [createRedeemTxn]
     # Side: Both

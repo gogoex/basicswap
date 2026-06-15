@@ -5684,66 +5684,54 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
                 bid.pkhash_seller = ci_to.pkh(pubkey_refund)
 
-                prefunded_tx = self.getPreFundedTx(
-                    Concepts.OFFER,
-                    offer.offer_id,
-                    TxTypes.ITX_PRE_FUNDED,
-                    cursor=use_cursor,
-                )
-                nav_addr_redeem = None
-                nav_addr_refund = None
-                blinding_key = None
                 if coin_from == Coins.NAV:
-                    txn, lock_tx_vout, nav_addr_redeem, nav_addr_refund, blinding_key = ci_from.createInitiateTxn(bid_id, bid, lock_value, secret_hash, bid_date, use_cursor)
+                    txid = ci_from.acceptNavInitiate(
+                        bid_id,
+                        bid,
+                        offer,
+                        script,
+                        secret_hash,
+                        lock_value,
+                        bid_date,
+                        use_cursor,
+                    )
                 else:
+                    prefunded_tx = self.getPreFundedTx(
+                        Concepts.OFFER,
+                        offer.offer_id,
+                        TxTypes.ITX_PRE_FUNDED,
+                        cursor=use_cursor,
+                    )
                     txn, lock_tx_vout = self.createInitiateTxn(
                         coin_from, bid_id, bid, script, prefunded_tx
                     )
 
-                # Store the signed refund txn in case wallet is locked when refund is possible
-                if coin_from == Coins.NAV:
-                    refund_txn = self.createRefundTxn(
-                        coin_from, txn, offer, bid, script,
-                        addr_refund_out=nav_addr_refund, cursor=use_cursor,
-                        secret_hash=secret_hash,
-                    )
-                else:
+                    # Store the signed refund txn in case wallet is locked when refund is possible
                     refund_txn = self.createRefundTxn(
                         coin_from, txn, offer, bid, script, cursor=use_cursor
                     )
-                bid.initiate_txn_refund = bytes.fromhex(refund_txn)
+                    bid.initiate_txn_refund = bytes.fromhex(refund_txn)
 
-                txn_funded = None
-                if coin_from == Coins.NAV:
-                    txn_funded = txn
-                    txn = ci_from.signBlsct(txn)
-                    chain_height_before_submit = ci_from.getChainHeight()
-
-                txid = ci_from.publishTx(bytes.fromhex(txn))
-                self.log.debug(
-                    f"Submitted initiate txn {self.logIDT(txid)} to {ci_from.coin_name()} chain for bid {self.log.id(bid_id)}",
-                )
-
-                if coin_from == Coins.NAV:
-                    ci_from.importItxAndSendPayloadMsgToBidder(bid_id, bid, offer, nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key, txn_funded, chain_height_before_submit, use_cursor)
-
-                bid.initiate_tx = SwapTx(
-                    bid_id=bid_id,
-                    tx_type=TxTypes.ITX,
-                    txid=bytes.fromhex(txid),
-                    vout=lock_tx_vout,
-                    tx_data=bytes.fromhex(txn),
-                    tx_data_funded=bytes.fromhex(txn_funded) if coin_from == Coins.NAV else None,
-                    script=ci_from.createFakeNonNavHTLCScript(secret_hash, lock_value) if coin_from == Coins.NAV else script,
-                )
-                bid.setITxState(TxStates.TX_SENT)
-                self.logEvent(
-                    Concepts.BID,
-                    bid.bid_id,
-                    EventLogTypes.ITX_PUBLISHED,
-                    "",
-                    use_cursor,
-                )
+                    txid = ci_from.publishTx(bytes.fromhex(txn))
+                    self.log.debug(
+                        f"Submitted initiate txn {self.logIDT(txid)} to {ci_from.coin_name()} chain for bid {self.log.id(bid_id)}",
+                    )
+                    bid.initiate_tx = SwapTx(
+                        bid_id=bid_id,
+                        tx_type=TxTypes.ITX,
+                        txid=bytes.fromhex(txid),
+                        vout=lock_tx_vout,
+                        tx_data=bytes.fromhex(txn),
+                        script=script,
+                    )
+                    bid.setITxState(TxStates.TX_SENT)
+                    self.logEvent(
+                        Concepts.BID,
+                        bid.bid_id,
+                        EventLogTypes.ITX_PUBLISHED,
+                        "",
+                        use_cursor,
+                    )
 
                 # Check non-bip68 final
                 if not ci_from.useBackend():
