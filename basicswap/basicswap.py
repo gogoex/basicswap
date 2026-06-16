@@ -3604,6 +3604,16 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             if coin in self.balance_only_coins:
                 raise ValueError(f"Invalid coin: {coin.name}")
 
+        nav_in_pair = Coins.NAV in (coin_from, coin_to)
+        if nav_in_pair and swap_type != SwapTypes.NAV_SWAP:
+            raise ValueError(
+                f"NAV coin pair must use the NAV_SWAP swap type: {coin_from.name} -> {coin_to.name}"
+            )
+        if swap_type == SwapTypes.NAV_SWAP and not nav_in_pair:
+            raise ValueError(
+                f"NAV_SWAP requires a NAV coin: {coin_from.name} -> {coin_to.name}"
+            )
+
         if swap_type == SwapTypes.XMR_SWAP:
             reverse_bid: bool = self.is_reverse_ads_bid(coin_from, coin_to)
             itx_coin = coin_to if reverse_bid else coin_from

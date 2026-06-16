@@ -593,7 +593,7 @@ def strSwapDesc(swap_type) -> str:
     if swap_type == SwapTypes.XMR_SWAP:
         return "Adaptor Sig"
     if swap_type == SwapTypes.NAV_SWAP:
-        return "Secret Hash"
+        return "Secret Hash (BLSCT)"
     return None
 
 
