@@ -67,8 +67,8 @@ def swap_type_from_string(str_swap_type: str) -> SwapTypes:
         return SwapTypes.SELLER_FIRST
     elif str_swap_type == "xmr_swap" or str_swap_type == "adaptor_sig":
         return SwapTypes.XMR_SWAP
-    elif str_swap_type == "nav_swap":
-        return SwapTypes.NAV_SWAP
+    elif str_swap_type == "secret_hash_blsct":
+        return SwapTypes.SECRET_HASH_BLSCT
     else:
         raise ValueError("Unknown swap type")
 
@@ -194,9 +194,9 @@ def parseOfferFormData(swap_client, form_data, page_data, options={}):
         swap_type = SwapTypes.SELLER_FIRST
     elif Coins.NAV in (parsed_data["coin_from"], parsed_data["coin_to"]):
         # NAV uses a secret-hash HTLC, but a BLSCT-based one that differs from
-        # the standard Bitcoin-script HTLC (no adaptor sigs); force NAV_SWAP
-        parsed_data["swap_type"] = strSwapType(SwapTypes.NAV_SWAP)
-        swap_type = SwapTypes.NAV_SWAP
+        # the standard Bitcoin-script HTLC (no adaptor sigs); force SECRET_HASH_BLSCT
+        parsed_data["swap_type"] = strSwapType(SwapTypes.SECRET_HASH_BLSCT)
+        swap_type = SwapTypes.SECRET_HASH_BLSCT
     else:
         parsed_data["swap_type"] = strSwapType(SwapTypes.XMR_SWAP)
         swap_type = SwapTypes.XMR_SWAP

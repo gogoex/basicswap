@@ -402,7 +402,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
     protocolInterfaces = {
         SwapTypes.SELLER_FIRST: atomic_swap_1.AtomicSwapInterface(),
         SwapTypes.XMR_SWAP: xmr_swap_1.XmrSwapInterface(),
-        SwapTypes.NAV_SWAP: nav_swap_1.NavSwapInterface(),
+        SwapTypes.SECRET_HASH_BLSCT: nav_swap_1.NavSwapInterface(),
     }
 
     def __init__(
@@ -3605,13 +3605,13 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 raise ValueError(f"Invalid coin: {coin.name}")
 
         nav_in_pair = Coins.NAV in (coin_from, coin_to)
-        if nav_in_pair and swap_type != SwapTypes.NAV_SWAP:
+        if nav_in_pair and swap_type != SwapTypes.SECRET_HASH_BLSCT:
             raise ValueError(
-                f"NAV coin pair must use the NAV_SWAP swap type: {coin_from.name} -> {coin_to.name}"
+                f"NAV coin pair must use the Secret Hash (BLSCT) swap type: {coin_from.name} -> {coin_to.name}"
             )
-        if swap_type == SwapTypes.NAV_SWAP and not nav_in_pair:
+        if swap_type == SwapTypes.SECRET_HASH_BLSCT and not nav_in_pair:
             raise ValueError(
-                f"NAV_SWAP requires a NAV coin: {coin_from.name} -> {coin_to.name}"
+                f"Secret Hash (BLSCT) requires a NAV coin: {coin_from.name} -> {coin_to.name}"
             )
 
         if swap_type == SwapTypes.XMR_SWAP:
@@ -3626,7 +3626,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 raise ValueError(
                     f"Invalid swap type for: {coin_from.name} -> {coin_to.name}"
                 )
-        elif swap_type == SwapTypes.NAV_SWAP:
+        elif swap_type == SwapTypes.SECRET_HASH_BLSCT:
             pass  # NAV uses a secret-hash HTLC variant; adaptor-sig not supported
         else:
             if (
@@ -5343,7 +5343,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
             now: int = self.getTime()
             encoded_proof_utxos = None
-            if offer.swap_type in (SwapTypes.SELLER_FIRST, SwapTypes.NAV_SWAP):
+            if offer.swap_type in (SwapTypes.SELLER_FIRST, SwapTypes.SECRET_HASH_BLSCT):
                 proof_addr, proof_sig, proof_utxos = self.getProofOfFunds(
                     coin_to, amount_to, offer_id
                 )
@@ -10422,7 +10422,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         )
         reverse_bid: bool = self.is_reverse_ads_bid(coin_from, coin_to)
 
-        if offer_data.swap_type in (SwapTypes.SELLER_FIRST, SwapTypes.NAV_SWAP):
+        if offer_data.swap_type in (SwapTypes.SELLER_FIRST, SwapTypes.SECRET_HASH_BLSCT):
             ensure(
                 offer_data.protocol_version >= MINPROTO_VERSION_SECRET_HASH,
                 "Invalid protocol version",
@@ -10887,7 +10887,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         # assert (bid_data.rate != offer['data'].rate), 'Bid rate mismatch'
 
         swap_type = offer.swap_type
-        if swap_type in (SwapTypes.SELLER_FIRST, SwapTypes.NAV_SWAP):
+        if swap_type in (SwapTypes.SELLER_FIRST, SwapTypes.SECRET_HASH_BLSCT):
             ensure(len(bid_data.pkhash_buyer) == 20, "Bad pkhash_buyer length")
 
             proof_utxos = ci_to.decodeProofUtxos(bid_data.proof_utxos)
