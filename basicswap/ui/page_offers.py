@@ -583,7 +583,9 @@ def page_newoffer(self, url_split, post_string):
             "automation_strategies": automation_strategies,
             "summary": summary,
             "swap_types": [
-                (strSwapType(x), strSwapDesc(x)) for x in SwapTypes if strSwapType(x)
+                (strSwapType(x), strSwapDesc(x))
+                for x in SwapTypes
+                if strSwapType(x) and x != SwapTypes.NAV_SWAP
             ],
             "show_chart": swap_client.settings.get("show_chart", True),
             "coingecko_api_key": coingecko_api_key,
