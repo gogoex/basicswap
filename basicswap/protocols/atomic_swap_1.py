@@ -20,6 +20,7 @@ from basicswap.basicswap_util import (
     EventLogTypes,
     SwapTypes,
 )
+from basicswap.chainparams import Coins
 from . import ProtocolInterface
 
 INITIATE_TX_TIMEOUT = 40 * 60  # TODO: make variable per coin
@@ -122,6 +123,13 @@ def extractScriptSecretHash(script):
 def redeemITx(self, bid_id: bytes, cursor):
     bid, offer = self.getBidAndOffer(bid_id, cursor)
     ci_from = self.ci(offer.coin_from)
+
+    # TEMP TEST: skip NAV ITX redeem to trigger offerer refund path
+    if ci_from.coin_type() == Coins.NAV:
+        self.log.debug(
+            f"TEMP: skipping NAV ITX redeem for bid {self.logIDB(bid_id)} (refund test)"
+        )
+        return
 
     txn = self.createRedeemTxn(
         ci_from.coin_type(), bid, for_txn_type="initiate", cursor=cursor
