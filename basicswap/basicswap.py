@@ -7630,8 +7630,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         # Seller redeems from participate txn
         if bid.was_received:
             ci_to = self.ci(offer.coin_to)
-            # TEMP TEST: skip PTX redeem for NAV pairs to trigger participant PTX refund
-            if Coins(offer.coin_from) == Coins.NAV:
+            # TEMP TEST: skip NAV PTX redeem to trigger bidder NAV PTX refund (LTC->NAV)
+            if Coins(offer.coin_to) == Coins.NAV:
                 self.log.debug(
                     f"TEMP: skipping PTX redeem for bid {self.logIDB(bid_id)} (refund test)"
                 )
