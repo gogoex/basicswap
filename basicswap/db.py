@@ -263,9 +263,23 @@ class Bid(Table, StateRows):
     # Height of scriptless chain before the swap
     chain_b_height_start = Column("integer")
 
+    # NAV (BLSCT) swap fields.
+    # Contract pubkeys: the counterparty's contract pubkey, used to derive the
+    # HTLC blinding key via ECDH (local contract privkey * counterparty pubkey).
+    # Required because the full pubkey (a point) is not locally derivable and
+    # master only stores pkhash (a hash); each side uses the other's.
     bidder_contract_pubkey = Column("blob")
     offerer_contract_pubkey = Column("blob")
+    # NAV redeem address, pre-exchanged in BID / BID_ACCEPT so the offerer can
+    # build the HTLC redeem branch (address_a) before creating the ITX.
     nav_redeem_addr = Column("string")
+    # Raw NAV_ITX_IMPORT / NAV_PTX_IMPORT message bytes, persisted for crash
+    # recovery: importing a NAV HTLC script (importblsctscript) + rescanblockchain
+    # to locate the output is expensive and may be interrupted; on restart the
+    # buffered message lets processBidAccept / checkBidState redo the import.
+    # These can be dropped entirely if BLSCT import is eliminated (i.e. the
+    # receiver discovers the HTLC output via view-key scan instead of importing
+    # a reconstructed scriptPubKey) -- then there is nothing to buffer/recover.
     nav_itx_import_info = Column("blob")
     nav_ptx_import_info = Column("blob")
 
