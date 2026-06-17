@@ -39,12 +39,12 @@ class NAVInterface(BTCInterface):
     # Side: Both
     # Call Graph: importItxAndSendPayloadMsgToBidder | createParticipateTxn -> _buildHtlcImportPayload
     @staticmethod
-    def _buildHtlcImportPayload(msg_type, bid_id, lock_value, nav_addr_refund, chain_height, txn_funded):
-        # blinding_key and nav_addr_redeem (address_a) are omitted: the receiver
-        # derives the blinding key via ECDH and already holds its own redeem
-        # address in bid.nav_redeem_addr.
+    def _buildHtlcImportPayload(msg_type, bid_id, lock_value, nav_addr_refund, chain_height):
+        # blinding_key, nav_addr_redeem (address_a) and tx_data_funded are omitted:
+        # the receiver derives the blinding key via ECDH, holds its own redeem
+        # address in bid.nav_redeem_addr, and reconstructs the spend prevout from
+        # the on-chain output (outid + bid amount) with wallet gamma recovery.
         addr_b_bytes = nav_addr_refund.encode()
-        tx_data_bytes = bytes.fromhex(txn_funded)
         return (
             format(int(msg_type), "02x")
             + bid_id.hex()
@@ -52,8 +52,6 @@ class NAVInterface(BTCInterface):
             + format(len(addr_b_bytes), "02x")
             + addr_b_bytes.hex()
             + chain_height.to_bytes(4, "big").hex()
-            + len(tx_data_bytes).to_bytes(4, "big").hex()
-            + tx_data_bytes.hex()
         )
 
     # [_buildImportBlsctScriptParams]
@@ -116,7 +114,6 @@ class NAVInterface(BTCInterface):
             secret_hash,
             lock_value,
             blinding_key,
-            txn_funded,
             chain_height_before_submit,
             cursor,
         )
@@ -143,31 +140,23 @@ class NAVInterface(BTCInterface):
     # [createRedeemTxn]
     # Side: Both
     # Call Graph: Bidder: checkQueuedActions[REDEEM_ITX] -> redeemITx -> createRedeemTxn | Offerer: checkBidState[SWAP_INITIATED] -> participateTxnConfirmed -> createRedeemTxn
-    def buildNavRedeemPrevout(self, bid, nav_txn, privkey, txn_script, is_ptx) -> dict:
-        secret_hash = atomic_swap_1.extractScriptSecretHash(txn_script)
-        tx_data_funded = nav_txn.tx_data_funded
-
-        # Try to reload tx_data_funded from DB if lost from memory (e.g. after restart)
-        if tx_data_funded is None:
-            self._sc.log.warning(f"createRedeemTxn: {'PTx' if is_ptx else 'ITx'} tx_data_funded not in memory for bid {self._sc.log.id(bid.bid_id)}, reloading from DB")
-            db_bid = self._sc.getBid(bid.bid_id)
-            db_tx = db_bid.participate_tx if (db_bid and is_ptx) else (db_bid.initiate_tx if db_bid else None)
-            if db_tx:
-                tx_data_funded = db_tx.tx_data_funded
-            else:
-                raise ValueError(f"NAV {'PTX' if is_ptx else 'ITX'} tx_data_funded not available for bid {bid.bid_id.hex()}")
-
-        prevout = self.getPrevOutInfoFromOffChainTxn(tx_data_funded.hex(), secret_hash)
-        if nav_txn.txid is not None:
-            # outid has been stored as txid
-            prevout["outid"] = nav_txn.txid.hex()
+    def buildNavRedeemPrevout(self, bid, nav_txn, privkey, is_ptx) -> dict:
+        # Reconstruct the spend prevout without the funded tx: outid is the detected
+        # on-chain output id (stored as nav_txn.txid), amount comes from the bid, and
+        # gamma is recovered by the wallet at spend time (omitted here; createRedeemTxn
+        # leaves it out so createblsctrawtransaction recovers it from blsctRecoveryData).
+        ensure(nav_txn.txid is not None, f"NAV {'PTX' if is_ptx else 'ITX'} redeem prevout: on-chain outid not known for bid {bid.bid_id.hex()}")
+        prev_amount = bid.amount_to if is_ptx else bid.amount
 
         ecdh_pubkey = bid.bidder_contract_pubkey if bid.was_received else bid.offerer_contract_pubkey
         blinding_key_int = self.deriveBlindingKey(privkey, ecdh_pubkey)
-        prevout["spending_key"] = self.deriveSpendingKey(
-            f"{blinding_key_int:064x}", bid.nav_redeem_addr
-        )
-        return prevout
+        return {
+            "outid": nav_txn.txid.hex(),
+            "amount": self.format_amount(prev_amount),
+            "spending_key": self.deriveSpendingKey(
+                f"{blinding_key_int:064x}", bid.nav_redeem_addr
+            ),
+        }
 
     # [createRefundTxn]
     # Side: Both
@@ -339,11 +328,10 @@ class NAVInterface(BTCInterface):
             nav_txn = bid.initiate_tx
             is_ptx = False
             prev_amount = bid.amount
-        txn_script = nav_txn.script
 
         bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
         privkey = self._sc.getContractPrivkey(bid_date, bid.contract_count)
-        prevout = self.buildNavRedeemPrevout(bid, nav_txn, privkey, txn_script, is_ptx)
+        prevout = self.buildNavRedeemPrevout(bid, nav_txn, privkey, is_ptx)
 
         secret = bid.recovered_secret
         if secret is None:
@@ -513,7 +501,7 @@ class NAVInterface(BTCInterface):
         chain_height = self.getChainHeight()
         nav_ptx_import_payload = self._buildHtlcImportPayload(
             MessageTypes.NAV_PTX_IMPORT, bid_id, lock_value,
-            nav_addr_refund, chain_height, txn_funded,
+            nav_addr_refund, chain_height,
         )
 
         # Update bid participate_tx fields
@@ -560,10 +548,11 @@ class NAVInterface(BTCInterface):
         output_value: int, # in Navoshis
         txn_script: bytes | None = None,
     ) -> str:
+        # gamma omitted: createblsctrawtransaction recovers it from the wallet's
+        # blsctRecoveryData (populated when the HTLC script was imported + rescanned).
         in_params: dict[str, Any] = {
             "outid": prevout["outid"],
             "value": self.make_int(prevout["amount"]),  # NAV to Navoshis
-            "gamma": prevout["gamma"],
             "spending_key": prevout["spending_key"],
             "scriptSig": txn_script.hex(),
         }
@@ -815,7 +804,7 @@ class NAVInterface(BTCInterface):
 
     # [getPrevOutInfoFromOffChainTxn]
     # Side: Both
-    # Call Graph: buildNavRedeemPrevout | buildNavRefundPrevout | createParticipateTxn -> getPrevOutInfoFromOffChainTxn
+    # Call Graph: buildNavRefundPrevout | createParticipateTxn -> getPrevOutInfoFromOffChainTxn
     def getPrevOutInfoFromOffChainTxn(self, txn_hex: str, secret_hash: bytes) -> PrevOutInfo:
         txjs = self.rpc_wallet("decodeblsctrawtransaction", [txn_hex])
         self._log.debug(f"getPrevOutInfoFromOffChainTxn: secret_hash={secret_hash.hex()}")
@@ -938,7 +927,7 @@ class NAVInterface(BTCInterface):
     def importItxAndRescanChain(self, bid_id, bid) -> None:
         if bid.nav_itx_import_info is None:
             return
-        _, lock_value, nav_addr_refund, rescan_from, tx_data_funded_bytes = self._parseHtlcImportMsg(bid.nav_itx_import_info)
+        _, lock_value, nav_addr_refund, rescan_from = self._parseHtlcImportMsg(bid.nav_itx_import_info)
         secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
         # blinding_key derived via ECDH; nav_addr_redeem is our own (sent in BID)
         bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
@@ -964,15 +953,12 @@ class NAVInterface(BTCInterface):
             self._sc.log.info(f"Rescanning from height {rescan_from} to find ITX UTXO")
             self.rpc_wallet("rescanblockchain", [rescan_from])
             self._sc.log.info(f"Rescan complete")
-        ensure(tx_data_funded_bytes is not None, "NAV_ITX_IMPORT missing tx_data_funded")
-        ensure(bid.initiate_tx.tx_data_funded is None, "NAV ITX tx_data_funded already set")
-        bid.initiate_tx.tx_data_funded = tx_data_funded_bytes
         bid.nav_itx_import_info = None
 
     # [acceptBid]
     # Side: Offerer
     # Call Graph: checkQueuedActions[ACCEPT_BID] -> acceptBid
-    def importItxAndSendPayloadMsgToBidder(self, bid_id, bid, offer, nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key, txn_funded, chain_height_before_submit, use_cursor):
+    def importItxAndSendPayloadMsgToBidder(self, bid_id, bid, offer, nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key, chain_height_before_submit, use_cursor):
         # Import HTLC script so wallet tracks the output after tx aggregation (txid changes when mined).
         params = self._buildImportBlsctScriptParams(
             nav_addr_redeem,
@@ -983,11 +969,11 @@ class NAVInterface(BTCInterface):
         )
         self.importBlsctScript(params, chain_height_before_submit)
 
-        # Send NAV_ITX_IMPORT to bidder so they can import the HTLC script
-        # and have tx_data_funded available to create the ITx redeem txn.
+        # Send NAV_ITX_IMPORT to bidder so they can import the HTLC script.
+        # The bidder reconstructs the redeem prevout from the on-chain output.
         nav_itx_import_payload = self._buildHtlcImportPayload(
             MessageTypes.NAV_ITX_IMPORT, bid_id, lock_value,
-            nav_addr_refund, chain_height_before_submit, txn_funded,
+            nav_addr_refund, chain_height_before_submit,
         )
         self._sc.sendMessage(
             offer.addr_from, bid.bid_addr, nav_itx_import_payload,
@@ -1003,7 +989,7 @@ class NAVInterface(BTCInterface):
     def importPtxAndApplyToBid(self, bid_id, bid) -> bool:
         if bid.nav_ptx_import_info is None:
             return False
-        _, lock_value, nav_addr_refund, rescan_from, tx_data_funded_bytes = self._parseHtlcImportMsg(bid.nav_ptx_import_info)
+        _, lock_value, nav_addr_refund, rescan_from = self._parseHtlcImportMsg(bid.nav_ptx_import_info)
         secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
         # blinding_key derived via ECDH; nav_addr_redeem is our own (sent in BID_ACCEPT)
         bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
@@ -1016,10 +1002,8 @@ class NAVInterface(BTCInterface):
         )
         self.importBlsctScript(params, rescan_from)
         self._sc.log.info(f"Imported NAV PTX HTLC script for bid {self._sc.log.id(bid_id)}")
-        ensure(tx_data_funded_bytes is not None, "NAV_PTX_IMPORT missing tx_data_funded")
         fake_script = self.createFakeNonNavHTLCScript(secret_hash, lock_value)
         bid.participate_tx.script = fake_script
-        bid.participate_tx.tx_data_funded = tx_data_funded_bytes
         bid.nav_ptx_import_info = None
         return True
 
@@ -1251,12 +1235,7 @@ class NAVInterface(BTCInterface):
         offset += addr_b_len
         rescan_from = int.from_bytes(msg_bytes[offset: offset + 4], "big")
         offset += 4
-        tx_data_funded_bytes = None
-        if offset < len(msg_bytes):
-            tx_data_len = int.from_bytes(msg_bytes[offset: offset + 4], "big")
-            offset += 4
-            tx_data_funded_bytes = msg_bytes[offset: offset + tx_data_len]
-        return bid_id, lock_value, nav_addr_refund, rescan_from, tx_data_funded_bytes
+        return bid_id, lock_value, nav_addr_refund, rescan_from
 
     # [MessageHandler: NAV_ITX_IMPORT]
     # Side: Bidder
