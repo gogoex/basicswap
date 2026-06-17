@@ -8607,6 +8607,16 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 index = None
                 if found:
                     if coin_from == Coins.NAV:
+                        # BLSCT hides the amount from third parties, but the bidder
+                        # holds the view material and recovers it (found["value"]),
+                        # so verify the ITX locks the agreed amount (mirrors the PTX check).
+                        txo_value = found.get("value", None)
+                        if txo_value != bid.amount:
+                            self.setBidError(
+                                bid,
+                                f"Incorrect output amount in initiate txn {self.logIDT(initiate_txnid_hex)}: {txo_value} != {bid.amount}",
+                            )
+                            return True
                         bid.initiate_tx.conf = found["depth"]
                         tx_height = found["height"]
                         outid = found.get("outid", None)
