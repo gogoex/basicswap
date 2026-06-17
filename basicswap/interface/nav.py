@@ -39,17 +39,16 @@ class NAVInterface(BTCInterface):
     # Side: Both
     # Call Graph: importItxAndSendPayloadMsgToBidder | createParticipateTxn -> _buildHtlcImportPayload
     @staticmethod
-    def _buildHtlcImportPayload(msg_type, bid_id, blinding_key, lock_value, nav_addr_redeem, nav_addr_refund, chain_height, txn_funded):
-        addr_a_bytes = nav_addr_redeem.encode()
+    def _buildHtlcImportPayload(msg_type, bid_id, lock_value, nav_addr_refund, chain_height, txn_funded):
+        # blinding_key and nav_addr_redeem (address_a) are omitted: the receiver
+        # derives the blinding key via ECDH and already holds its own redeem
+        # address in bid.nav_redeem_addr.
         addr_b_bytes = nav_addr_refund.encode()
         tx_data_bytes = bytes.fromhex(txn_funded)
         return (
             format(int(msg_type), "02x")
             + bid_id.hex()
-            + blinding_key.to_bytes(32, "big").hex()
             + lock_value.to_bytes(4, "big").hex()
-            + format(len(addr_a_bytes), "02x")
-            + addr_a_bytes.hex()
             + format(len(addr_b_bytes), "02x")
             + addr_b_bytes.hex()
             + chain_height.to_bytes(4, "big").hex()
@@ -513,8 +512,8 @@ class NAVInterface(BTCInterface):
         # Build NAV_PTX_IMPORT payload to send to offerer
         chain_height = self.getChainHeight()
         nav_ptx_import_payload = self._buildHtlcImportPayload(
-            MessageTypes.NAV_PTX_IMPORT, bid_id, blinding_key, lock_value,
-            nav_addr_redeem, nav_addr_refund, chain_height, txn_funded,
+            MessageTypes.NAV_PTX_IMPORT, bid_id, lock_value,
+            nav_addr_refund, chain_height, txn_funded,
         )
 
         # Update bid participate_tx fields
@@ -939,8 +938,14 @@ class NAVInterface(BTCInterface):
     def importItxAndRescanChain(self, bid_id, bid) -> None:
         if bid.nav_itx_import_info is None:
             return
-        _, blinding_key, lock_value, nav_addr_redeem, nav_addr_refund, rescan_from, tx_data_funded_bytes = self._parseHtlcImportMsg(bid.nav_itx_import_info)
+        _, lock_value, nav_addr_refund, rescan_from, tx_data_funded_bytes = self._parseHtlcImportMsg(bid.nav_itx_import_info)
         secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
+        # blinding_key derived via ECDH; nav_addr_redeem is our own (sent in BID)
+        bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
+        privkey = self._sc.getContractPrivkey(bid_date, bid.contract_count)
+        ecdh_pubkey = bid.bidder_contract_pubkey if bid.was_received else bid.offerer_contract_pubkey
+        blinding_key = self.deriveBlindingKey(privkey, ecdh_pubkey)
+        nav_addr_redeem = bid.nav_redeem_addr
         params = self._buildImportBlsctScriptParams(
             nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key,
         )
@@ -981,8 +986,8 @@ class NAVInterface(BTCInterface):
         # Send NAV_ITX_IMPORT to bidder so they can import the HTLC script
         # and have tx_data_funded available to create the ITx redeem txn.
         nav_itx_import_payload = self._buildHtlcImportPayload(
-            MessageTypes.NAV_ITX_IMPORT, bid_id, blinding_key, lock_value,
-            nav_addr_redeem, nav_addr_refund, chain_height_before_submit, txn_funded,
+            MessageTypes.NAV_ITX_IMPORT, bid_id, lock_value,
+            nav_addr_refund, chain_height_before_submit, txn_funded,
         )
         self._sc.sendMessage(
             offer.addr_from, bid.bid_addr, nav_itx_import_payload,
@@ -998,8 +1003,14 @@ class NAVInterface(BTCInterface):
     def importPtxAndApplyToBid(self, bid_id, bid) -> bool:
         if bid.nav_ptx_import_info is None:
             return False
-        _, blinding_key, lock_value, nav_addr_redeem, nav_addr_refund, rescan_from, tx_data_funded_bytes = self._parseHtlcImportMsg(bid.nav_ptx_import_info)
+        _, lock_value, nav_addr_refund, rescan_from, tx_data_funded_bytes = self._parseHtlcImportMsg(bid.nav_ptx_import_info)
         secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
+        # blinding_key derived via ECDH; nav_addr_redeem is our own (sent in BID_ACCEPT)
+        bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
+        privkey = self._sc.getContractPrivkey(bid_date, bid.contract_count)
+        ecdh_pubkey = bid.bidder_contract_pubkey if bid.was_received else bid.offerer_contract_pubkey
+        blinding_key = self.deriveBlindingKey(privkey, ecdh_pubkey)
+        nav_addr_redeem = bid.nav_redeem_addr
         params = self._buildImportBlsctScriptParams(
             nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key,
         )
@@ -1232,14 +1243,8 @@ class NAVInterface(BTCInterface):
         offset = 0
         bid_id = msg_bytes[offset: offset + 28]
         offset += 28
-        blinding_key = int.from_bytes(msg_bytes[offset: offset + 32], "big")
-        offset += 32
         lock_value = int.from_bytes(msg_bytes[offset: offset + 4], "big")
         offset += 4
-        addr_a_len = msg_bytes[offset]
-        offset += 1
-        nav_addr_redeem = msg_bytes[offset: offset + addr_a_len].decode()
-        offset += addr_a_len
         addr_b_len = msg_bytes[offset]
         offset += 1
         nav_addr_refund = msg_bytes[offset: offset + addr_b_len].decode()
@@ -1251,7 +1256,7 @@ class NAVInterface(BTCInterface):
             tx_data_len = int.from_bytes(msg_bytes[offset: offset + 4], "big")
             offset += 4
             tx_data_funded_bytes = msg_bytes[offset: offset + tx_data_len]
-        return bid_id, blinding_key, lock_value, nav_addr_redeem, nav_addr_refund, rescan_from, tx_data_funded_bytes
+        return bid_id, lock_value, nav_addr_refund, rescan_from, tx_data_funded_bytes
 
     # [MessageHandler: NAV_ITX_IMPORT]
     # Side: Bidder
