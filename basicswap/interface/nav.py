@@ -798,9 +798,11 @@ class NAVInterface(BTCInterface):
     # Side: Bidder
     # Call Graph: createParticipateTxn -> getParticipateLockValue
     def getParticipateLockValue(self, offer) -> int:
-        # half of ITX duration; 30s NAV block time (no lock_blocks field in add-navio-new)
-        nav_blocks = offer.lock_value // 2 // 30
-        return self.getChainHeight() + nav_blocks
+        # Half the ITX duration, as an absolute unix-timestamp CLTV (matches the
+        # timestamp-based ITX lock from getLockValue). navio enforces time-based
+        # locks via nSequence >= LOCKTIME_THRESHOLD vs median-time-past, so the PTX
+        # matures before the longer ITX in wall-clock regardless of block rate.
+        return self._sc.getTime() + offer.lock_value // 2
 
     # [getPrevOutInfoFromOffChainTxn]
     # Side: Both
