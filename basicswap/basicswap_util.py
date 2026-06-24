@@ -67,6 +67,8 @@ class MessageTypes(IntEnum):
     PORTAL_OFFER = auto()
     PORTAL_SEND = auto()
 
+    NAV_SECRET_REVEAL = auto()
+
 
 class AddressTypes(IntEnum):
     OFFER = auto()
@@ -84,6 +86,7 @@ class SwapTypes(IntEnum):
     BUYER_FIRST_2MSG = auto()
     XMR_SWAP = auto()
     XMR_BCH_SWAP = auto()
+    SECRET_HASH_BLSCT = auto()
 
 
 class OfferStates(IntEnum):
@@ -250,6 +253,7 @@ class DebugTypes(IntEnum):
     BID_DONT_SPEND_COIN_A_LOCK = auto()
     DONT_SEND_COIN_B_LOCK = auto()
     DONT_RELEASE_COIN_A_LOCK = auto()
+    DONT_SPEND_PTX = auto()
 
 
 class NotificationTypes(IntEnum):
@@ -578,6 +582,8 @@ def strSwapType(swap_type) -> str:
         return "seller_first"
     if swap_type == SwapTypes.XMR_SWAP:
         return "xmr_swap"
+    if swap_type == SwapTypes.SECRET_HASH_BLSCT:
+        return "secret_hash_blsct"
     return None
 
 
@@ -586,6 +592,8 @@ def strSwapDesc(swap_type) -> str:
         return "Secret Hash"
     if swap_type == SwapTypes.XMR_SWAP:
         return "Adaptor Sig"
+    if swap_type == SwapTypes.SECRET_HASH_BLSCT:
+        return "Secret Hash (BLSCT)"
     return None
 
 
