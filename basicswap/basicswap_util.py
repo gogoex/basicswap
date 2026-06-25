@@ -66,8 +66,7 @@ class MessageTypes(IntEnum):
     CONNECT_REQ = auto()
     PORTAL_OFFER = auto()
     PORTAL_SEND = auto()
-
-    NAV_SECRET_REVEAL = auto()
+    NAV_HTLC_PREIMAGE = auto()
 
 
 class AddressTypes(IntEnum):
@@ -253,7 +252,6 @@ class DebugTypes(IntEnum):
     BID_DONT_SPEND_COIN_A_LOCK = auto()
     DONT_SEND_COIN_B_LOCK = auto()
     DONT_RELEASE_COIN_A_LOCK = auto()
-    DONT_SPEND_PTX = auto()
 
 
 class NotificationTypes(IntEnum):

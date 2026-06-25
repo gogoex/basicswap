@@ -329,8 +329,6 @@ function getRateInferred(event) {
 
 const SwapTypeManager = {
     coins_without_segwit: ['11', '12'],
-    adaptor_sig_only_coins: ['6', '9', '8', '7', '13', '18', '17'],
-    secret_hash_only_coins: ['11', '12'],
     secret_hash_blsct_only_coins: ['14'],
 
     setSwapTypeEnabled: (coinFrom, coinTo, swapTypeElement) => {

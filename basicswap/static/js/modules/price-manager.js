@@ -182,7 +182,7 @@ const PriceManager = (function() {
 
                 const coinNames = window.CoinManager
                     ? window.CoinManager.getAllCoins().map(c => c.name.toLowerCase())
-                    : ['bitcoin', 'bitcoin-cash', 'dash', 'dogecoin', 'decred', 'namecoin', 'litecoin', 'particl', 'pivx', 'monero', 'wownero', 'firo', 'navcoin'];
+                    : ['bitcoin', 'bitcoin-cash', 'dash', 'dogecoin', 'decred', 'namecoin', 'litecoin', 'particl', 'pivx', 'monero', 'wownero', 'firo', 'navio'];
 
                 coinNames.forEach(coin => {
                     emptyData[coin] = { usd: null, btc: null };

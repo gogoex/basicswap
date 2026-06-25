@@ -284,7 +284,7 @@ FIRO_RPC_USER = os.getenv("FIRO_RPC_USER", "")
 FIRO_RPC_PWD = os.getenv("FIRO_RPC_PWD", "")
 
 NAV_RPC_HOST = os.getenv("NAV_RPC_HOST", "127.0.0.1")
-NAV_RPC_PORT = int(os.getenv("NAV_RPC_PORT", 44445))  # TODO NAV revert this upon making pr (testnet7 port)
+NAV_RPC_PORT = int(os.getenv("NAV_RPC_PORT", 44445))  # TODO NAV check dev with the port to use for the PR
 NAV_ONION_PORT = int(os.getenv("NAV_ONION_PORT", 8334))  # TODO?
 NAV_RPC_USER = os.getenv("NAV_RPC_USER", "")
 NAV_RPC_PWD = os.getenv("NAV_RPC_PWD", "")
@@ -1094,7 +1094,6 @@ def tryPrepareCore(coin, version_data, signer, settings, data_dir, extra_opts={}
         if coin not in (
             "firo",
             "bitcoincash",
-            "navio",  # TODO NAV re-enable once public key is published on releases.nav.io
         ):
             assert_sig_url = assert_url + (".asc" if use_guix else ".sig")
             assert_sig_filename = "{}-{}-{}-build-{}.assert.sig".format(
@@ -1180,24 +1179,6 @@ def tryPrepareCore(coin, version_data, signer, settings, data_dir, extra_opts={}
             importPubkey(gpg, pubkey_filename, pubkeyurls)
             with open(assert_path, "rb") as fp:
                 verified = gpg.verify_file(fp)
-    elif coin == "navio":  # TODO NAV re-enable verification once public key is published on releases.nav.io
-        logger.warning("Skipping signature verification for navio (public key unavailable).")
-        verified = None
-    elif coin in ("navcoin"):
-        with open(assert_sig_path, "rb") as fp:
-            verified = gpg.verify_file(fp)
-
-        if not isValidSignature(verified) and verified.username is None:
-            logger.warning("Signature made by unknown key.")
-            importPubkey(gpg, pubkey_filename, pubkeyurls)
-            with open(assert_sig_path, "rb") as fp:
-                verified = gpg.verify_file(fp)
-
-        # .sig file is not a detached signature, recheck release hash in decrypted data
-        logger.warning("Double checking Navcoin release hash.")
-        with open(assert_sig_path, "rb") as fp:
-            decrypted = gpg.decrypt_file(fp)
-            assert release_hash in str(decrypted)
     else:
         with open(assert_sig_path, "rb") as fp:
             verified = gpg.verify_file(fp, assert_path)
@@ -1207,8 +1188,7 @@ def tryPrepareCore(coin, version_data, signer, settings, data_dir, extra_opts={}
             with open(assert_sig_path, "rb") as fp:
                 verified = gpg.verify_file(fp, assert_path)
 
-    if coin != "navio":  # TODO NAV re-enable once public key is published on releases.nav.io
-        ensureValidSignatureBy(verified, signing_key_name)
+    ensureValidSignatureBy(verified, signing_key_name)
     extractCore(coin, version_data, settings, bin_dir, release_path, extra_opts)
 
 

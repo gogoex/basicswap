@@ -263,8 +263,8 @@ class Bid(Table, StateRows):
     # Height of scriptless chain before the swap
     chain_b_height_start = Column("integer")
 
-    bidder_contract_pubkey = Column("blob")
-    offerer_contract_pubkey = Column("blob")
+    nav_bidder_pubkey = Column("blob")
+    nav_offerer_pubkey = Column("blob")
     nav_redeem_addr = Column("string")
 
     reject_code = Column("integer")
@@ -323,9 +323,6 @@ class SwapTx(Table, StateRows):
     block_hash = Column("blob")
     block_height = Column("integer")
     block_time = Column("integer")
-
-    tx_data_funded = Column("blob")
-    outid = Column("blob")
 
     primary_key = PrimaryKeyConstraint("bid_id", "tx_type")
 

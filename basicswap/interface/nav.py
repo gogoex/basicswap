@@ -62,7 +62,6 @@ class NAVInterface(BTCInterface):
         )
         bid.initiate_txn_refund = bytes.fromhex(refund_txn)
 
-        txn_funded = txn
         txn = self.signBlsct(txn)
         chain_height_before_submit = self.getChainHeight()
 
@@ -77,7 +76,6 @@ class NAVInterface(BTCInterface):
             txid=bytes.fromhex(txid),
             vout=lock_tx_vout,
             tx_data=bytes.fromhex(txn),
-            tx_data_funded=bytes.fromhex(txn_funded),
             script=self.createFakeNonNavHTLCScript(secret_hash, lock_value),
         )
         bid.setITxState(TxStates.TX_SENT)
@@ -102,7 +100,7 @@ class NAVInterface(BTCInterface):
         lock_val = self.extractHTLCLockVal(txn_script, is_nav=True)
         prevout = self.getPrevOutInfoFromChain(secret_hash, lock_val)
 
-        ecdh_pubkey = bid.bidder_contract_pubkey if bid.was_received else bid.offerer_contract_pubkey
+        ecdh_pubkey = bid.nav_bidder_pubkey if bid.was_received else bid.nav_offerer_pubkey
         blinding_key_int = self.deriveBlindingKey(privkey, ecdh_pubkey)
         prevout["spending_key"] = self.deriveSpendingKey(
             f"{blinding_key_int:064x}", bid.nav_redeem_addr
@@ -119,7 +117,7 @@ class NAVInterface(BTCInterface):
 
         bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
         local_privkey = self._sc.getContractPrivkey(bid_date, bid.contract_count)
-        ecdh_cpty_pubkey = bid.bidder_contract_pubkey if bid.was_received else bid.offerer_contract_pubkey
+        ecdh_cpty_pubkey = bid.nav_bidder_pubkey if bid.was_received else bid.nav_offerer_pubkey
         blinding_key_int = self.deriveBlindingKey(local_privkey, ecdh_cpty_pubkey)
         prevout["spending_key"] = self.deriveSpendingKey(
             f"{blinding_key_int:064x}", addr_refund_out
@@ -223,7 +221,7 @@ class NAVInterface(BTCInterface):
         nav_addr_redeem = bid.nav_redeem_addr
         nav_addr_refund = self._sc.getReceiveAddressFromPool(Coins.NAV, bid_id, TxTypes.ITX_REFUND, use_cursor)
         seller_privkey = self._sc.getContractPrivkey(bid_date, bid.contract_count)
-        blinding_key = self.deriveBlindingKey(seller_privkey, bid.bidder_contract_pubkey)
+        blinding_key = self.deriveBlindingKey(seller_privkey, bid.nav_bidder_pubkey)
 
         txn, lock_tx_vout = self.createFundedHTLCTxn(
             nav_addr_redeem, nav_addr_refund, secret_hash, locktime, blinding_key, bid.amount,
@@ -421,8 +419,8 @@ class NAVInterface(BTCInterface):
         # Derive blinding key via ECDH (bidder_privkey, offerer_pubkey)
         bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
         bidder_privkey = self._sc.getContractPrivkey(bid_date, bid.contract_count)
-        lock_value = self.getParticipateLockValue(offer)
-        blinding_key = self.deriveBlindingKey(bidder_privkey, bid.offerer_contract_pubkey)
+        lock_value = self.getLockValue(offer, is_initiate=False)
+        blinding_key = self.deriveBlindingKey(bidder_privkey, bid.nav_offerer_pubkey)
         # Create funded PTX and PTX refund txn
         txn_funded, vout_index = self.createFundedHTLCTxn(
             nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key, bid.amount_to,
@@ -445,7 +443,6 @@ class NAVInterface(BTCInterface):
         self._sc.addParticipateTxn(bid_id, bid, Coins.NAV, txid, vout_index, chain_height)
         bid.participate_tx.script = participate_script
         bid.participate_tx.tx_data = bytes.fromhex(txn_signed)
-        bid.participate_tx.tx_data_funded = bytes.fromhex(txn_funded)
         prevout_info = self.getPrevOutInfoFromOffChainTxn(txn_funded, secret_hash)
         bid.participate_tx.txid = bytes.fromhex(prevout_info["outid"])
 
@@ -666,6 +663,19 @@ class NAVInterface(BTCInterface):
         # difference between redeem and refund transactions are small
         return 1336
 
+    # [getLockValue]
+    # Side: Both
+    # Call Graph: acceptBid (initiate) | createParticipateTxn (participate) -> getLockValue
+    def getLockValue(self, offer, is_initiate: bool) -> int:
+        # Absolute CLTV. The participate (PTX) lock is half the initiate (ITX)
+        # duration so the PTX matures first, regardless of block rate.
+        duration = offer.lock_value if is_initiate else offer.lock_value // 2
+        if offer.lock_type == TxLockTypes.ABS_LOCK_BLOCKS:
+            return self.getChainHeight() + duration
+        # Absolute unix-timestamp CLTV (navio enforces time-based locks via
+        # locktime >= LOCKTIME_THRESHOLD vs median-time-past).
+        return self._sc.getTime() + duration
+
     # [getNavLockTxHeight]
     # Side: Offerer
     # Call Graph: checkBidState[SWAP_INITIATED] -> isInitiateTxnOnChain | tryToGetNavPtxInfoFromChain -> getNavLockTxHeight
@@ -729,16 +739,6 @@ class NAVInterface(BTCInterface):
             ],
         )
         return address
-
-    # [getParticipateLockValue]
-    # Side: Bidder
-    # Call Graph: createParticipateTxn -> getParticipateLockValue
-    def getParticipateLockValue(self, offer) -> int:
-        # Half the ITX duration, as an absolute unix-timestamp CLTV (matches the
-        # timestamp-based ITX lock from getLockValue). navio enforces time-based
-        # locks via nSequence >= LOCKTIME_THRESHOLD vs median-time-past, so the PTX
-        # matures before the longer ITX in wall-clock regardless of block rate.
-        return self._sc.getTime() + offer.lock_value // 2
 
     # [getPrevOutInfoFromChain]
     # Side: Both
@@ -991,7 +991,7 @@ class NAVInterface(BTCInterface):
 
     # [isHTLCTxnSpent]
     # Side: Both
-    # Call Graph: detectNavItxRefund | isNavItxRefunded | handleSwapParticipating -> isHTLCTxnSpent
+    # Call Graph: detectNavItxRefund | handleSwapParticipating -> isHTLCTxnSpent
     def isHTLCTxnSpent(self, script: bytes) -> bool:
         secret_hash = atomic_swap_1.extractScriptSecretHash(script)
         locktime = self.extractHTLCLockVal(script, is_nav=False)
@@ -1047,23 +1047,6 @@ class NAVInterface(BTCInterface):
             lock_val=locktime,
         )
 
-    # [checkBidState]
-    # Side: Offerer
-    # Call Graph: update -> checkBidState
-    def isNavItxRefunded(self, bid) -> bool:
-        # ITX was previously confirmed but UTXO gone — spent before re-detection, likely refunded
-        if (
-            bid.getITxState() == TxStates.TX_SENT
-            and bid.initiate_tx.conf is not None
-            and bid.initiate_tx.conf >= 1
-            and self.isHTLCTxnSpent(bid.initiate_tx.script)
-        ):
-            bid.setITxState(TxStates.TX_REFUNDED)
-            bid.setState(BidStates.SWAP_COMPLETED)
-            self._sc.saveBid(bid.bid_id, bid)
-            return True
-        return False
-
     # [isTxNonFinalError]
     # Side: Both
     # Call Graph: acceptBid | checkBidState -> isTxNonFinalError
@@ -1078,26 +1061,26 @@ class NAVInterface(BTCInterface):
     def _listBlsctUnspent(self) -> list:
         return self.rpc_wallet("listblsctunspent", [0])
 
-    # [MessageHandler: NAV_SECRET_REVEAL]
+    # [MessageHandler: NAV_HTLC_PREIMAGE]
     # Side: Bidder
-    # Call Graph: update -> processMsg[NAV_SECRET_REVEAL]
-    def processNavSecretReveal(self, msg) -> None:
+    # Call Graph: update -> processMsg[NAV_HTLC_PREIMAGE]
+    def processNavHtlcPreimage(self, msg) -> None:
         msg_bytes = self._sc.getSmsgMsgBytes(msg)
         bid_id = msg_bytes[:28]
         secret = msg_bytes[28:60]
 
-        self._sc.log.info(f"Received NAV secret reveal for bid {self._sc.log.id(bid_id)}")
+        self._sc.log.info(f"Received NAV HTLC preimage for bid {self._sc.log.id(bid_id)}")
         if bid_id not in self._sc.swaps_in_progress:
-            self._sc.log.warning(f"processNavSecretReveal: bid {self._sc.log.id(bid_id)} not in progress")
+            self._sc.log.warning(f"processNavHtlcPreimage: bid {self._sc.log.id(bid_id)} not in progress")
             return
 
         bid = self._sc.swaps_in_progress[bid_id][0]
         if bid.was_received:
-            self._sc.log.debug(f"processNavSecretReveal: offerer ignoring own reveal for bid {self._sc.log.id(bid_id)}")
+            self._sc.log.debug(f"processNavHtlcPreimage: offerer ignoring own preimage for bid {self._sc.log.id(bid_id)}")
             return
 
         bid.recovered_secret = secret
-        # NAV PTx was spent by the offerer to reveal the secret — mark it redeemed
+        # Offerer spent the NAV PTx (using this preimage) — mark it redeemed
         if bid.participate_tx:
             bid.setPTxState(TxStates.TX_REDEEMED)
         delay = self._sc.get_short_delay_event_seconds()
@@ -1129,12 +1112,12 @@ class NAVInterface(BTCInterface):
     # [participateTxnConfirmed]
     # Side: Offerer
     # Call Graph: update -> checkBidState[SWAP_INITIATED] -> participateTxnConfirmed
-    def sendNavSecretReveal(self, bid_id, bid, offer) -> None:
+    def sendNavHtlcPreimage(self, bid_id, bid, offer) -> None:
         # NAV uses BLSCT (private txns) so bidder can't observe the secret from the chain directly.
         # Offerer explicitly sends the secret to bidder so bidder can redeem the ITX (non-NAV side).
         bid_date = dt.datetime.fromtimestamp(bid.created_at).date()
         secret = self._sc.getContractSecret(bid_date, bid.contract_count)
-        payload_hex = str.format("{:02x}", MessageTypes.NAV_SECRET_REVEAL) + bid_id.hex() + secret.hex()
+        payload_hex = str.format("{:02x}", MessageTypes.NAV_HTLC_PREIMAGE) + bid_id.hex() + secret.hex()
         self._sc.sendMessage(offer.addr_from, bid.bid_addr, payload_hex, self._sc.SMSG_SECONDS_IN_HOUR, None)
 
     # [signBlsct]
