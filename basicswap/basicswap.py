@@ -3604,13 +3604,8 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             if coin in self.balance_only_coins:
                 raise ValueError(f"Invalid coin: {coin.name}")
 
-        nav_in_pair = Coins.NAV in (coin_from, coin_to)
-        if nav_in_pair and swap_type != SwapTypes.SECRET_HASH_BLSCT:
-            raise ValueError(
-                f"NAV coin pair must use the Secret Hash (BLSCT) swap type: {coin_from.name} -> {coin_to.name}"
-            )
         if swap_type == SwapTypes.SECRET_HASH_BLSCT:
-            if not nav_in_pair:
+            if Coins.NAV not in (coin_from, coin_to):
                 raise ValueError(
                     f"Secret Hash (BLSCT) requires a NAV coin: {coin_from.name} -> {coin_to.name}"
                 )
@@ -3620,6 +3615,11 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     f"NAV requires a secret-hash HTLC counterpart: {coin_from.name} -> {coin_to.name}"
                 )
             return
+        else:
+            if Coins.NAV in (coin_from, coin_to):
+                raise ValueError(
+                    f"NAV coin pair must use the Secret Hash (BLSCT) swap type: {coin_from.name} -> {coin_to.name}"
+                )
 
         if swap_type == SwapTypes.XMR_SWAP:
             reverse_bid: bool = self.is_reverse_ads_bid(coin_from, coin_to)
@@ -8850,10 +8850,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                 if self.ci(coin_from).detectNavItxRefund(bid):
                     save_bid = True
         elif state == BidStates.SWAP_PARTICIPATING:
+            # Waiting for initiate txn spend
             if coin_from == Coins.NAV or coin_to == Coins.NAV:
                 save_bid = self.ci(Coins.NAV).handleSwapParticipating(bid_id, bid, coin_from, coin_to)
-            # Waiting for initiate txn spend
-            pass
         elif state == BidStates.BID_ERROR:
             # Wait for user input
             pass
