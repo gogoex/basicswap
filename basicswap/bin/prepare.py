@@ -149,7 +149,7 @@ expected_key_ids = {
         "02B8E7D002167C8B451AF05FE2F3D7916E722D38",
     ),
     "reuben": ("0186454D63E83D85EF91DE4E1290A1D0FA7EE109",),
-    "navio_builder": ("4DC1A6D4CB76395724FB97DBA05B6DF4513EA050",),  # TODO NAV update to the latest
+    "navio_builder": ("4DC1A6D4CB76395724FB97DBA05B6DF4513EA050",),
     "nicolasdorier": (
         "AB4CFA9895ACA0DBE27F6B346618763EF09186FE",
         "015B4C837B245509E4AC8995223FDA69DEBEA82D",
@@ -1156,8 +1156,6 @@ def tryPrepareCore(coin, version_data, signer, settings, data_dir, extra_opts={}
         pubkeyurls.append(
             "https://gitlab.com/bitcoin-cash-node/bitcoin-cash-node/-/raw/master/contrib/gitian-signing/pubkeys.txt"
         )
-    if coin == "navio":
-        pubkeyurls.append("https://releases.nav.io/navio-build-signing-public.asc")  # TODO NAV create pgp key file for navio
 
     coin_id = getCoinIdFromName(coin)
     ticker: str = chainparams[coin_id]["ticker"]
