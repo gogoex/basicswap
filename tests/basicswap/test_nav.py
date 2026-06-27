@@ -8,6 +8,8 @@ import unittest
 
 from coincurve.keys import PrivateKey
 
+import types
+
 from basicswap.basicswap_util import TxLockTypes
 from basicswap.interface.nav import NAVInterface
 import basicswap.protocols.atomic_swap_1 as atomic_swap_1
@@ -158,23 +160,40 @@ class TestGetSeedHash(unittest.TestCase):
         seed = bytes(range(32))
         assert ci.getSeedHash(seed) == seed
 
-class TestTimelockOpcode(unittest.TestCase):
-    """Verify timelock_opcode derivation for all 4 lock types."""
+class TestGetLockValue(unittest.TestCase):
+    """getLockValue: absolute timestamp vs block-height CLTV, ITX vs PTX duration."""
 
-    def _opcode(self, lock_type):
-        return "csv" if lock_type < TxLockTypes.ABS_LOCK_BLOCKS else "cltv"
+    NOW = 1_700_000_000
+    HEIGHT = 2_000_000
 
-    def test_sequence_lock_blocks_gives_csv(self):
-        assert self._opcode(TxLockTypes.SEQUENCE_LOCK_BLOCKS) == "csv"
+    def _ci(self):
+        ci = ci_nav()
+        ci.getChainHeight = lambda: self.HEIGHT
+        ci._sc = types.SimpleNamespace(getTime=lambda: self.NOW)
+        return ci
 
-    def test_sequence_lock_time_gives_csv(self):
-        assert self._opcode(TxLockTypes.SEQUENCE_LOCK_TIME) == "csv"
+    def _offer(self, lock_type, lock_value):
+        return types.SimpleNamespace(lock_type=lock_type, lock_value=lock_value)
 
-    def test_abs_lock_blocks_gives_cltv(self):
-        assert self._opcode(TxLockTypes.ABS_LOCK_BLOCKS) == "cltv"
+    def test_abs_lock_time_initiate_uses_timestamp(self):
+        ci = self._ci()
+        offer = self._offer(TxLockTypes.ABS_LOCK_TIME, 3600)
+        assert ci.getLockValue(offer, is_initiate=True) == self.NOW + 3600
 
-    def test_abs_lock_time_gives_cltv(self):
-        assert self._opcode(TxLockTypes.ABS_LOCK_TIME) == "cltv"
+    def test_abs_lock_time_participate_is_half(self):
+        ci = self._ci()
+        offer = self._offer(TxLockTypes.ABS_LOCK_TIME, 3600)
+        assert ci.getLockValue(offer, is_initiate=False) == self.NOW + 1800
+
+    def test_abs_lock_blocks_initiate_uses_height(self):
+        ci = self._ci()
+        offer = self._offer(TxLockTypes.ABS_LOCK_BLOCKS, 100)
+        assert ci.getLockValue(offer, is_initiate=True) == self.HEIGHT + 100
+
+    def test_abs_lock_blocks_participate_is_half(self):
+        ci = self._ci()
+        offer = self._offer(TxLockTypes.ABS_LOCK_BLOCKS, 100)
+        assert ci.getLockValue(offer, is_initiate=False) == self.HEIGHT + 50
 
 class TestIsHTLCTxnSpent(unittest.TestCase):
     """Tests for isHTLCTxnSpent (RPCs stubbed)."""
