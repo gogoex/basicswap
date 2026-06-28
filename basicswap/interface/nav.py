@@ -120,7 +120,7 @@ class NAVInterface(BTCInterface):
         # returns outid/amount/gamma without importing), so no off-chain tx_data_funded
         # from the counterparty is needed. The on-chain outid is authoritative, which
         # handles the BLSCT-aggregation txid change after mining.
-        lock_val = self.extractHTLCLockVal(txn_script, is_nav=True)
+        lock_val = self.extractHTLCLockVal(txn_script, is_nav=False)
         prevout = self.getPrevOutInfoFromChain(secret_hash, lock_val)
 
         ecdh_pubkey = bid.nav_bidder_pubkey if bid.was_received else bid.nav_offerer_pubkey
