@@ -116,17 +116,24 @@ class NAVInterface(BTCInterface):
     # Call Graph: Bidder: checkQueuedActions[REDEEM_ITX] -> redeemITx -> createRedeemTxn | Offerer: checkBidState[SWAP_INITIATED] -> participateTxnConfirmed -> createRedeemTxn
     def buildNavRedeemPrevout(self, bid, nav_txn, privkey, txn_script, is_ptx) -> dict:
         secret_hash = atomic_swap_1.extractScriptSecretHash(txn_script)
-        # Reconstruct the prevout from the on-chain HTLC output (rc36 listblsctunspent
-        # returns outid/amount/gamma without importing), so no off-chain tx_data_funded
-        # from the counterparty is needed. The on-chain outid is authoritative, which
-        # handles the BLSCT-aggregation txid change after mining.
+        # Reconstruct the prevout from the on-chain HTLC output via listblsctunspent
+        # (no off-chain tx_data_funded from the counterparty needed). The on-chain
+        # outid is authoritative, handling the BLSCT-aggregation txid change after mining.
         lock_val = self.extractHTLCLockVal(txn_script, is_nav=False)
         prevout = self.getPrevOutInfoFromChain(secret_hash, lock_val)
 
         ecdh_pubkey = bid.nav_bidder_pubkey if bid.was_received else bid.nav_offerer_pubkey
         blinding_key_int = self.deriveBlindingKey(privkey, ecdh_pubkey)
+        blinding_key_hex = f"{blinding_key_int:064x}"
+        if prevout.get("gamma") is None:
+            # The HTLC output is watch-only for the redeemer, so listblsctunspent doesn't
+            # expose gamma. Recover it from our blinding key + redeem address (address_a,
+            # the hashlock branch the output is blinded to).
+            nonce = self.rpc_wallet("deriveblsctnonce", [blinding_key_hex, bid.nav_redeem_addr])
+            rec = self.rpc_wallet("getblsctrecoverydatawithnonce", [prevout["outid"], nonce])
+            prevout["gamma"] = rec["outputs"][0]["gamma"]
         prevout["spending_key"] = self.deriveSpendingKey(
-            f"{blinding_key_int:064x}", bid.nav_redeem_addr
+            blinding_key_hex, bid.nav_redeem_addr
         )
         return prevout
 
@@ -783,7 +790,9 @@ class NAVInterface(BTCInterface):
             return {
                 "outid": utxo.get("outid") or utxo.get("outputHash", ""),
                 "amount": utxo["amount"],
-                "gamma": utxo["gamma"],
+                # gamma is absent for watch-only HTLC outputs; buildNavRedeemPrevout
+                # recovers it from the blinding key when needed.
+                "gamma": utxo.get("gamma"),
             }
         raise ValueError(f"No on-chain HTLC output for secret_hash={secret_hash.hex()}")
 
