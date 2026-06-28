@@ -715,7 +715,7 @@ class NAVInterface(BTCInterface):
         dest_address,
         bid_amount,
         rescan_from,
-        lock_val: int = 0,
+        lock_val: "int | None" = None,
     ):
         """BLSCT-specific lock tx lookup.
         dest_address is the secret_hash hex. lock_val is the NAV CLTV lock block
@@ -738,7 +738,7 @@ class NAVInterface(BTCInterface):
                 spk_secret_hash = atomic_swap_1.extractScriptSecretHash(spk_bytes).hex()
                 spk_lock_val = self.extractHTLCLockVal(spk_bytes, is_nav=True)
                 self._log.debug(f"getNavLockTxHeight: HTLC UTxO spk_secret_hash={spk_secret_hash} spk_lock_val={spk_lock_val}")
-                if spk_secret_hash == secret_hash and spk_lock_val == lock_val:
+                if spk_secret_hash == secret_hash and (lock_val is None or spk_lock_val == lock_val):
                     confirmations = utxo.get("confirmations", 0)
                     chain_info = self.rpc("getblockchaininfo")
                     chain_height = chain_info["blocks"]
@@ -748,6 +748,7 @@ class NAVInterface(BTCInterface):
                         "height": block_height,
                         "outid": utxo.get("outid", None) or utxo.get("outputHash", ""),
                         "value": int(round(utxo.get("amount", 0) * 100_000_000)),
+                        "lock_val": spk_lock_val,
                     }
                     self._log.info(f"getNavLockTxHeight found HTLC via listblsctunspent: {rv}")
                     return rv
@@ -1179,18 +1180,29 @@ class NAVInterface(BTCInterface):
     # Side: Offerer
     # Call Graph: update -> checkBidState[SWAP_INITIATED]
     def tryToGetNavPtxInfoFromChain(self, bid, participate_txid):
-        # Search by secret hash via listblsctunspent; BLSCT outputs have no visible address
-        if bid.participate_tx is None or bid.participate_tx.script is None:
+        # Offerer detects the bidder's NAV PTX. It has no PTX script, so take the
+        # secret_hash from its own ITX and scan listblsctunspent by secret_hash alone:
+        # the bidder chose the PTX lock_val, so it's unknown here (lock_val only
+        # disambiguates same-hash outputs in test envs; the offerer's NAV wallet holds
+        # just this PTX for the hash). Read the lock_val from the matched output and
+        # store the fake PTX script so the redeem path can extract it later.
+        if bid.initiate_tx is None or bid.initiate_tx.script is None:
             return None
-        secret_hash = atomic_swap_1.extractScriptSecretHash(bid.participate_tx.script)
-        lock_val = self.extractHTLCLockVal(bid.participate_tx.script, is_nav=False)
-        return self.getNavLockTxHeight(
+        secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
+        found = self.getNavLockTxHeight(
             participate_txid,
             secret_hash.hex(),
             bid.amount_to,
             bid.chain_b_height_start,
-            lock_val=lock_val,
+            lock_val=None,
         )
+        if found is not None and bid.participate_tx is None:
+            bid.participate_tx = SwapTx(
+                bid_id=bid.bid_id,
+                tx_type=TxTypes.PTX,
+                script=self.createFakeNonNavHTLCScript(secret_hash, found["lock_val"]),
+            )
+        return found
 
     # [checkBidState / SWAP_INITIATED]
     # Side: Offerer
