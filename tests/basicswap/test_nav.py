@@ -269,40 +269,34 @@ class TestGetPrevOutInfoFromChain(unittest.TestCase):
         self.ci = ci_nav()
         spk = bytes.fromhex(self.HTLC_HEX)
         self.secret_hash = atomic_swap_1.extractScriptSecretHash(spk)
-        self.lock_val = self.ci.extractHTLCLockVal(spk, is_nav=True)
 
     def _stub(self, utxos):
         self.ci._listBlsctUnspent = lambda: utxos
 
     def test_match_returns_prevout(self):
         self._stub([{"scriptPubKey": self.HTLC_HEX, "outid": "abc", "amount": 1.5, "gamma": "gg"}])
-        prevout = self.ci.getPrevOutInfoFromChain(self.secret_hash, self.lock_val)
+        prevout = self.ci.getPrevOutInfoFromChain(self.secret_hash)
         assert prevout == {"outid": "abc", "amount": 1.5, "gamma": "gg"}
 
     def test_outputHash_fallback_when_no_outid(self):
         self._stub([{"scriptPubKey": self.HTLC_HEX, "outputHash": "deadbeef", "amount": 2, "gamma": "g"}])
-        prevout = self.ci.getPrevOutInfoFromChain(self.secret_hash, self.lock_val)
+        prevout = self.ci.getPrevOutInfoFromChain(self.secret_hash)
         assert prevout["outid"] == "deadbeef"
-
-    def test_lock_val_mismatch_raises(self):
-        self._stub([{"scriptPubKey": self.HTLC_HEX, "outid": "abc", "amount": 1, "gamma": "g"}])
-        with self.assertRaises(ValueError):
-            self.ci.getPrevOutInfoFromChain(self.secret_hash, self.lock_val + 1)
 
     def test_secret_hash_mismatch_raises(self):
         self._stub([{"scriptPubKey": self.OTHER_HTLC_HEX, "outid": "abc", "amount": 1, "gamma": "g"}])
         with self.assertRaises(ValueError):
-            self.ci.getPrevOutInfoFromChain(self.secret_hash, self.lock_val)
+            self.ci.getPrevOutInfoFromChain(self.secret_hash)
 
     def test_non_htlc_utxos_skipped_raises(self):
         self._stub([{"scriptPubKey": "76a91488ac", "outid": "x", "amount": 1, "gamma": "g"}])
         with self.assertRaises(ValueError):
-            self.ci.getPrevOutInfoFromChain(self.secret_hash, self.lock_val)
+            self.ci.getPrevOutInfoFromChain(self.secret_hash)
 
     def test_empty_utxo_list_raises(self):
         self._stub([])
         with self.assertRaises(ValueError):
-            self.ci.getPrevOutInfoFromChain(self.secret_hash, self.lock_val)
+            self.ci.getPrevOutInfoFromChain(self.secret_hash)
 
 if __name__ == "__main__":
     unittest.main()

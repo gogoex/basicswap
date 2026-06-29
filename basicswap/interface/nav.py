@@ -119,8 +119,7 @@ class NAVInterface(BTCInterface):
         # Reconstruct the prevout from the on-chain HTLC output via listblsctunspent
         # (no off-chain tx_data_funded from the counterparty needed). The on-chain
         # outid is authoritative, handling the BLSCT-aggregation txid change after mining.
-        lock_val = self.extractHTLCLockVal(txn_script, is_nav=False)
-        prevout = self.getPrevOutInfoFromChain(secret_hash, lock_val)
+        prevout = self.getPrevOutInfoFromChain(secret_hash)
 
         ecdh_pubkey = bid.nav_bidder_pubkey if bid.was_received else bid.nav_offerer_pubkey
         blinding_key_int = self.deriveBlindingKey(privkey, ecdh_pubkey)
@@ -715,7 +714,6 @@ class NAVInterface(BTCInterface):
         dest_address,
         bid_amount,
         rescan_from,
-        lock_val: "int | None" = None,
     ):
         """BLSCT-specific lock tx lookup.
         dest_address is the secret_hash hex. lock_val is the NAV CLTV lock block
@@ -738,7 +736,7 @@ class NAVInterface(BTCInterface):
                 spk_secret_hash = atomic_swap_1.extractScriptSecretHash(spk_bytes).hex()
                 spk_lock_val = self.extractHTLCLockVal(spk_bytes, is_nav=True)
                 self._log.debug(f"getNavLockTxHeight: HTLC UTxO spk_secret_hash={spk_secret_hash} spk_lock_val={spk_lock_val}")
-                if spk_secret_hash == secret_hash and (lock_val is None or spk_lock_val == lock_val):
+                if spk_secret_hash == secret_hash:
                     confirmations = utxo.get("confirmations", 0)
                     chain_info = self.rpc("getblockchaininfo")
                     chain_height = chain_info["blocks"]
@@ -774,19 +772,16 @@ class NAVInterface(BTCInterface):
     # [getPrevOutInfoFromChain]
     # Side: Both
     # Call Graph: buildNavRedeemPrevout -> getPrevOutInfoFromChain
-    def getPrevOutInfoFromChain(self, secret_hash: bytes, lock_val: int) -> PrevOutInfo:
-        # rc36 listblsctunspent returns outid/amount/gamma for the HTLC output
-        # without importblsctscript, replacing the off-chain tx_data_funded path
-        # for redeeming the counterparty's on-chain HTLC. lock_val disambiguates
-        # UTxOs sharing a secret_hash (e.g. ITX vs PTX, or test-env seed reuse).
+    def getPrevOutInfoFromChain(self, secret_hash: bytes) -> PrevOutInfo:
+        # Find the on-chain HTLC output by secret_hash via listblsctunspent (replacing
+        # the off-chain tx_data_funded path). A NAV swap has only one NAV leg, so the
+        # secret_hash uniquely identifies its HTLC output in this wallet.
         for utxo in self._listBlsctUnspent():
             spk = utxo.get("scriptPubKey", "").lower()
             if not self._isHTLCScript(spk):
                 continue
             spk_bytes = bytes.fromhex(spk)
             if atomic_swap_1.extractScriptSecretHash(spk_bytes) != secret_hash:
-                continue
-            if self.extractHTLCLockVal(spk_bytes, is_nav=True) != lock_val:
                 continue
             return {
                 "outid": utxo.get("outid") or utxo.get("outputHash", ""),
@@ -1053,8 +1048,7 @@ class NAVInterface(BTCInterface):
                     continue
                 spk_bytes = bytes.fromhex(spk)
                 spk_secret_hash = atomic_swap_1.extractScriptSecretHash(spk_bytes)
-                spk_lock_val = self.extractHTLCLockVal(spk_bytes, is_nav=True)
-                if secret_hash == spk_secret_hash and locktime == spk_lock_val:
+                if secret_hash == spk_secret_hash:
                     # UTxO appears in wallet — verify it's still in the confirmed UTXO set.
                     # listblsctunspent on watchonly wallets does not remove a UTxO when it
                     # is spent by an external wallet.  gettxout queries the consensus UTXO
@@ -1087,13 +1081,11 @@ class NAVInterface(BTCInterface):
     def isInitiateTxnOnChain(self, bid) -> dict:
         # Search by secret hash via listblsctunspent; BLSCT outputs have no visible address
         secret_hash = atomic_swap_1.extractScriptSecretHash(bid.initiate_tx.script)
-        locktime = self.extractHTLCLockVal(bid.initiate_tx.script, is_nav=False)
         return self.getNavLockTxHeight(
             bid.initiate_tx.txid,
             secret_hash.hex(),
             bid.amount,
             bid.chain_a_height_start,
-            lock_val=locktime,
         )
 
     # [isTxNonFinalError]
@@ -1194,7 +1186,6 @@ class NAVInterface(BTCInterface):
             secret_hash.hex(),
             bid.amount_to,
             bid.chain_b_height_start,
-            lock_val=None,
         )
         if found is not None and bid.participate_tx is None:
             bid.participate_tx = SwapTx(
