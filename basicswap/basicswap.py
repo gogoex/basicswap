@@ -3964,11 +3964,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         elif lock_type == TxLockTypes.ABS_LOCK_TIME:
             # TODO: range?
             ensure(not coin_from_has_csv or not coin_to_has_csv, "Should use CSV.")
-            # TEST (nav-refund-test): lower the 4h minimum in debug so refunds can be
-            # exercised with short locks. Restore 4h before the PR.
-            min_abs_lock = 60 if self.debug else 4 * 60 * 60
+            # TEST (nav-refund-test): drop the 4h minimum so short-lock refunds can be
+            # tested. Restore `lock_value >= 4 * 60 * 60 and` before the PR.
             ensure(
-                lock_value >= min_abs_lock and lock_value <= 96 * 60 * 60,
+                lock_value <= 96 * 60 * 60,
                 "Invalid lock_value time",
             )
         elif lock_type == TxLockTypes.ABS_LOCK_BLOCKS:
