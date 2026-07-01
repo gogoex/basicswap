@@ -7519,12 +7519,6 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         # Seller first mode, buyer participates
         participate_script = self.deriveParticipateScript(bid_id, bid, offer)
         if bid.was_sent:
-            # TEST (nav-refund-test): suppress the participate tx so the offerer's
-            # ITX is never redeemed -> exercises the ITX refund path after timeout.
-            self.log.warning(
-                f"TEST: suppressing participate tx for bid {self.log.id(bid_id)}"
-            )
-            return
             if bid.participate_tx is not None:
                 self.log.warning(
                     f"Participate tx {self.log.id(bid.participate_tx.txid)} already exists for bid {self.log.id(bid_id)}"
@@ -7648,6 +7642,12 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
 
         # Seller redeems from participate txn
         if bid.was_received:
+            # TEST (nav-refund-test): suppress the participate redeem so the bidder's
+            # PTX is never redeemed -> exercises the PTX refund path after timeout.
+            self.log.warning(
+                f"TEST: suppressing participate redeem for bid {self.log.id(bid_id)}"
+            )
+            return
             ci_to = self.ci(offer.coin_to)
             txn = self.createRedeemTxn(ci_to.coin_type(), bid)
             txid = ci_to.publishTx(bytes.fromhex(txn))
