@@ -89,7 +89,7 @@ DASH_VERSION_TAG = os.getenv("DASH_VERSION_TAG", "")
 FIRO_VERSION = os.getenv("FIRO_VERSION", "0.14.16.1")
 FIRO_VERSION_TAG = os.getenv("FIRO_VERSION_TAG", "")
 
-NAVIO_VERSION = os.getenv("NAVIO_VERSION", "0.1.0-rc36")
+NAVIO_VERSION = os.getenv("NAVIO_VERSION", "0.1.2")
 NAVIO_VERSION_TAG = os.getenv("NAVIO_VERSION_TAG", "")
 
 BITCOINCASH_VERSION = os.getenv("BITCOINCASH_VERSION", "29.0.0")
@@ -110,7 +110,7 @@ known_coins = {
     "pivx": (PIVX_VERSION, PIVX_VERSION_TAG, ("Fuzzbawls",)),
     "dash": (DASH_VERSION, DASH_VERSION_TAG, ("pasta", "UdjinM6")),
     "firo": (FIRO_VERSION, FIRO_VERSION_TAG, ("reuben",)),
-    "navio": (NAVIO_VERSION, NAVIO_VERSION_TAG, ("navio_builder",)),  # TODO NAV update to the latest
+    "navio": (NAVIO_VERSION, NAVIO_VERSION_TAG, ("navio_builder",)),
     "bitcoincash": (BITCOINCASH_VERSION, BITCOINCASH_VERSION_TAG, ("Calin_Culianu",)),
     "dogecoin": (DOGECOIN_VERSION, DOGECOIN_VERSION_TAG, ("tecnovert",)),
 }
@@ -1069,11 +1069,8 @@ def tryPrepareCore(coin, version_data, signer, settings, data_dir, extra_opts={}
                     bin_arch = "x86_64-apple-darwin"
                 else:
                     raise ValueError(f"Unsupported macOS arch for {coin}: {machine}")
-            # GitHub release tag drops the patch version: 0.1.0-rc36 -> v0.1rc36
-            base, _, suffix = version.partition("-")
-            release_tag = "v" + ".".join(base.split(".")[:2]) + suffix
-            version = version.replace("-", "")  # TODO NAV temporary measure. drop this after file name format fix
-            release_filename = f"{coin}-{version}-{bin_arch}.{FILE_EXT}"
+            release_tag = "v" + version + version_tag
+            release_filename = f"{coin}-{version}{version_tag}-{bin_arch}.{FILE_EXT}"
             base_url = f"https://github.com/nav-io/navio-core/releases/download/{release_tag}"
             release_url = f"{base_url}/{release_filename}"
             assert_url = f"{base_url}/SHA256SUMS"
