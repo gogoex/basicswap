@@ -63,20 +63,11 @@ class NAVInterface(BTCInterface):
         bid.initiate_txn_refund = bytes.fromhex(refund_txn)
 
         txn = self.signBlsct(txn)
-        chain_height_before_submit = self.getChainHeight()
 
         txid = self.publishTx(bytes.fromhex(txn))
         self._sc.log.debug(
             f"Submitted initiate txn {self._sc.logIDT(txid)} to {self.coin_name()} chain for bid {self._sc.log.id(bid_id)}",
         )
-
-        # The BLSCT HTLC output is blinded to address_a (the redeem/bidder view key),
-        # so it never auto-appears in the offerer's listblsctunspent. Import the script
-        # (address_b/refund side) so the offerer can detect + later refund its own ITX.
-        import_params = self._buildImportBlsctScriptParams(
-            nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key
-        )
-        self.importBlsctScript(import_params, chain_height_before_submit)
 
         bid.initiate_tx = SwapTx(
             bid_id=bid_id,
@@ -95,21 +86,6 @@ class NAVInterface(BTCInterface):
             cursor,
         )
         return txid
-
-    # [_buildImportBlsctScriptParams]
-    # Side: Offerer
-    # Call Graph: acceptNavInitiate -> _buildImportBlsctScriptParams
-    @staticmethod
-    def _buildImportBlsctScriptParams(nav_addr_redeem, nav_addr_refund, secret_hash, lock_value, blinding_key):
-        return {
-            "type": "atomic_swap",
-            "address_a": nav_addr_redeem,
-            "address_b": nav_addr_refund,
-            "hash": secret_hash.hex(),
-            "locktime": lock_value,
-            "timelock_opcode": "cltv",
-            "blinding_key": f"{blinding_key:064x}",
-        }
 
     # [createRedeemTxn]
     # Side: Both
@@ -893,22 +869,6 @@ class NAVInterface(BTCInterface):
                 bid.setPTxState(TxStates.TX_REFUNDED if ptx_refund_published else TxStates.TX_REDEEMED)
                 save_bid = True
         return save_bid
-
-    # [importBlsctScript]
-    # Side: Offerer
-    # Call Graph: acceptNavInitiate -> importBlsctScript
-    def importBlsctScript(self, params: dict, rescan_from) -> dict:
-        if rescan_from is not None:
-            try:
-                chain_height = self.rpc("getblockchaininfo")["blocks"]
-                rescan_from = min(rescan_from, chain_height)
-            except Exception as e:
-                self._log.warning(f"importBlsctScript: could not get chain height: {e}")
-        rescan = rescan_from is not None
-        args = [params, rescan]
-        if rescan:
-            args.append(rescan_from)
-        return self.rpc_wallet("importblsctscript", args)
 
     # [initialiseWallet]
     # Side: Both
