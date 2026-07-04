@@ -165,6 +165,7 @@ from .network.util import getMsgPubkey
 import basicswap.config as cfg
 import basicswap.network.network as bsn
 import basicswap.protocols.atomic_swap_1 as atomic_swap_1
+import basicswap.protocols.nav_swap_1 as nav_swap_1
 import basicswap.protocols.xmr_swap_1 as xmr_swap_1
 
 PROTOCOL_VERSION_SECRET_HASH = 5
@@ -402,7 +403,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
     protocolInterfaces = {
         SwapTypes.SELLER_FIRST: atomic_swap_1.AtomicSwapInterface(),
         SwapTypes.XMR_SWAP: xmr_swap_1.XmrSwapInterface(),
-        SwapTypes.SECRET_HASH_BLSCT: atomic_swap_1.AtomicSwapInterface(),
+        SwapTypes.SECRET_HASH_BLSCT: nav_swap_1.NavSwapInterface(),
     }
 
     def __init__(
@@ -10226,7 +10227,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     elif action_type == ActionTypes.SEND_XMR_SWAP_LOCK_SPEND_MSG:
                         self.sendXmrBidCoinALockSpendTxMsg(linked_id, cursor)
                     elif action_type == ActionTypes.REDEEM_ITX:
-                        atomic_swap_1.redeemITx(self, linked_id, cursor)
+                        nav_swap_1.redeemITx(self, linked_id, cursor)
                     elif action_type == ActionTypes.ACCEPT_AS_REV_BID:
                         accepting_bid = True
                         self.acceptADSReverseBid(linked_id, cursor)
