@@ -1093,6 +1093,7 @@ class NAVInterface(BTCInterface):
     # Call Graph: update -> processMsg[NAV_HTLC_PREIMAGE]
     def processNavHtlcPreimage(self, msg) -> None:
         msg_bytes = self._sc.getSmsgMsgBytes(msg)
+        ensure(len(msg_bytes) == 60, "Invalid NAV_HTLC_PREIMAGE length")  # bid_id(28) + secret(32)
         bid_id = msg_bytes[:28]
         secret = msg_bytes[28:60]
 
