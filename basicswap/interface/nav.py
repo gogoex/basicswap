@@ -855,12 +855,25 @@ class NAVInterface(BTCInterface):
     # Call Graph: update -> checkBidState[SWAP_PARTICIPATING]
     def handleSwapParticipating(self, bid_id, bid, coin_from, coin_to) -> bool:
         # NAV HTLC outputs have no visible address; isHTLCTxnSpent polls via listblsctunspent.
-        # coin_from == NAV: ITX is NAV — check if ITX is spent to mark it TX_REDEEMED.
-        # coin_to == NAV: PTX is NAV — check if PTX is spent; distinguish refund vs redeem via PTX_REFUND_PUBLISHED event.
+        # coin_from == NAV (ITX) / coin_to == NAV (PTX): on a spend, distinguish redeem
+        # vs refund. BLSCT hides the preimage on-chain, so infer from this node's own
+        # recorded action then its role (each HTLC has exactly two spenders).
         save_bid = False
-        if coin_from == Coins.NAV and bid.initiate_tx is not None:
+        if coin_from == Coins.NAV and bid.initiate_tx is not None and bid.getITxState() < TxStates.TX_REDEEMED:
             if self.isHTLCTxnSpent(bid.initiate_tx.script):
-                bid.setITxState(TxStates.TX_REDEEMED)
+                # ITX spenders: bidder (redeem) and offerer (refund, its own ITX).
+                events = self._sc.getEvents(int(Concepts.BID), bid_id)
+                i_refunded = any(e.event_type == int(EventLogTypes.ITX_REFUND_PUBLISHED) for e in events)
+                i_redeemed = any(e.event_type == int(EventLogTypes.ITX_REDEEM_PUBLISHED) for e in events)
+                if i_refunded:
+                    itx_state = TxStates.TX_REFUNDED
+                elif i_redeemed:
+                    itx_state = TxStates.TX_REDEEMED
+                elif bid.was_received:
+                    itx_state = TxStates.TX_REDEEMED  # offerer's ITX, didn't refund -> bidder redeemed
+                else:
+                    itx_state = TxStates.TX_REFUNDED  # bidder side, didn't redeem -> offerer refunded
+                bid.setITxState(itx_state)
                 save_bid = True
         elif coin_to == Coins.NAV and bid.getPTxState() < TxStates.TX_REDEEMED:
             if self.isHTLCTxnSpent(bid.participate_tx.script):
