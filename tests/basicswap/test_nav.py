@@ -10,9 +10,17 @@ from coincurve.keys import PrivateKey
 
 import types
 
-from basicswap.basicswap_util import TxLockTypes
+from basicswap.basicswap_util import (
+    EventLogTypes,
+    SwapTypes,
+    TxLockTypes,
+    TxStates,
+)
+from basicswap.chainparams import Coins
 from basicswap.interface.nav import NAVInterface
+from basicswap.util import TemporaryError
 import basicswap.protocols.atomic_swap_1 as atomic_swap_1
+import basicswap.protocols.nav_swap_1 as nav_swap_1
 from tests.basicswap.util import REQUIRED_SETTINGS
 
 def ci_nav():
@@ -297,6 +305,199 @@ class TestGetPrevOutInfoFromChain(unittest.TestCase):
         self._stub([])
         with self.assertRaises(ValueError):
             self.ci.getPrevOutInfoFromChain(self.secret_hash)
+
+def _mk_bid(*, ptx_state=None, itx_state=None, was_received=False, has_ptx=True, has_itx=True):
+    b = types.SimpleNamespace(
+        was_received=was_received,
+        participate_tx=types.SimpleNamespace(script=b"ptx") if has_ptx else None,
+        initiate_tx=types.SimpleNamespace(script=b"itx") if has_itx else None,
+    )
+    b._ptx = ptx_state
+    b._itx = itx_state
+    b.getPTxState = lambda: b._ptx
+    b.getITxState = lambda: b._itx
+
+    def set_ptx(s):
+        b._ptx = s
+
+    def set_itx(s):
+        b._itx = s
+
+    b.setPTxState = set_ptx
+    b.setITxState = set_itx
+    return b
+
+
+def _ev(event_type):
+    return types.SimpleNamespace(event_type=int(event_type))
+
+
+class TestHandleSwapParticipatingLabel(unittest.TestCase):
+    """handleSwapParticipating: redeem vs refund labelling on a NAV HTLC spend.
+
+    BLSCT hides the preimage on-chain, so the state is inferred from this node's
+    own recorded action then its role. Roles are reversed between legs: the
+    offerer is the redeem party of the PTX but the refund party of the ITX.
+    """
+
+    def setUp(self):
+        self.ci = ci_nav()
+        self.ci.isHTLCTxnSpent = lambda script: True  # spent
+
+    def _run(self, bid, coin_from, coin_to, events):
+        self.ci._sc = types.SimpleNamespace(getEvents=lambda ct, bid_id: events)
+        return self.ci.handleSwapParticipating(b"bid", bid, coin_from, coin_to)
+
+    # ---- PTX (coin_to == NAV): offerer = redeem, bidder = refund ----
+    def test_ptx_own_refund_event(self):
+        bid = _mk_bid(ptx_state=TxStates.TX_CONFIRMED)
+        assert self._run(bid, Coins.LTC, Coins.NAV, [_ev(EventLogTypes.PTX_REFUND_PUBLISHED)]) is True
+        assert bid.getPTxState() == TxStates.TX_REFUNDED
+
+    def test_ptx_own_redeem_event(self):
+        bid = _mk_bid(ptx_state=TxStates.TX_CONFIRMED)
+        self._run(bid, Coins.LTC, Coins.NAV, [_ev(EventLogTypes.PTX_REDEEM_PUBLISHED)])
+        assert bid.getPTxState() == TxStates.TX_REDEEMED
+
+    def test_ptx_offerer_no_event_is_refund(self):
+        # offerer (was_received) didn't redeem -> bidder refunded
+        bid = _mk_bid(ptx_state=TxStates.TX_CONFIRMED, was_received=True)
+        self._run(bid, Coins.LTC, Coins.NAV, [])
+        assert bid.getPTxState() == TxStates.TX_REFUNDED
+
+    def test_ptx_bidder_no_event_is_redeem(self):
+        # bidder (was_sent) didn't refund -> offerer redeemed
+        bid = _mk_bid(ptx_state=TxStates.TX_CONFIRMED, was_received=False)
+        self._run(bid, Coins.LTC, Coins.NAV, [])
+        assert bid.getPTxState() == TxStates.TX_REDEEMED
+
+    def test_ptx_guard_skips_when_already_terminal(self):
+        bid = _mk_bid(ptx_state=TxStates.TX_REFUNDED, was_received=True)
+        assert self._run(bid, Coins.LTC, Coins.NAV, []) is False
+        assert bid.getPTxState() == TxStates.TX_REFUNDED  # unchanged, no re-append
+
+    def test_ptx_not_spent_no_change(self):
+        self.ci.isHTLCTxnSpent = lambda script: False
+        bid = _mk_bid(ptx_state=TxStates.TX_CONFIRMED, was_received=True)
+        assert self._run(bid, Coins.LTC, Coins.NAV, []) is False
+        assert bid.getPTxState() == TxStates.TX_CONFIRMED
+
+    # ---- ITX (coin_from == NAV): offerer = refund, bidder = redeem ----
+    def test_itx_own_refund_event(self):
+        bid = _mk_bid(itx_state=TxStates.TX_CONFIRMED)
+        assert self._run(bid, Coins.NAV, Coins.LTC, [_ev(EventLogTypes.ITX_REFUND_PUBLISHED)]) is True
+        assert bid.getITxState() == TxStates.TX_REFUNDED
+
+    def test_itx_own_redeem_event(self):
+        bid = _mk_bid(itx_state=TxStates.TX_CONFIRMED)
+        self._run(bid, Coins.NAV, Coins.LTC, [_ev(EventLogTypes.ITX_REDEEM_PUBLISHED)])
+        assert bid.getITxState() == TxStates.TX_REDEEMED
+
+    def test_itx_offerer_no_event_is_redeem(self):
+        # offerer (was_received) owns the ITX; didn't refund -> bidder redeemed
+        bid = _mk_bid(itx_state=TxStates.TX_CONFIRMED, was_received=True)
+        self._run(bid, Coins.NAV, Coins.LTC, [])
+        assert bid.getITxState() == TxStates.TX_REDEEMED
+
+    def test_itx_bidder_no_event_is_refund(self):
+        # bidder (was_sent) didn't redeem -> offerer refunded
+        bid = _mk_bid(itx_state=TxStates.TX_CONFIRMED, was_received=False)
+        self._run(bid, Coins.NAV, Coins.LTC, [])
+        assert bid.getITxState() == TxStates.TX_REFUNDED
+
+    def test_itx_guard_skips_when_already_terminal(self):
+        bid = _mk_bid(itx_state=TxStates.TX_REDEEMED, was_received=True)
+        assert self._run(bid, Coins.NAV, Coins.LTC, []) is False
+
+
+class TestProcessNavHtlcPreimageLength(unittest.TestCase):
+    """processNavHtlcPreimage rejects a payload that isn't bid_id(28)+secret(32)."""
+
+    def setUp(self):
+        self.ci = ci_nav()
+
+    def _run(self, payload):
+        log = types.SimpleNamespace(
+            id=lambda x: "id",
+            info=lambda *a, **k: None,
+            warning=lambda *a, **k: None,
+            debug=lambda *a, **k: None,
+        )
+        self.ci._sc = types.SimpleNamespace(
+            getSmsgMsgBytes=lambda msg: payload,
+            log=log,
+            swaps_in_progress={},
+        )
+        return self.ci.processNavHtlcPreimage({})
+
+    def test_short_message_raises(self):
+        with self.assertRaises(ValueError):
+            self._run(b"\x00" * 59)
+
+    def test_long_message_raises(self):
+        with self.assertRaises(ValueError):
+            self._run(b"\x00" * 61)
+
+    def test_correct_length_passes_gate(self):
+        # 60 bytes, bid not in progress -> returns gracefully (length gate passed)
+        assert self._run(b"\x00" * 60) is None
+
+
+class TestNavSwapRedeemITx(unittest.TestCase):
+    """nav_swap_1.redeemITx: NAV wraps transient failures as TemporaryError so
+    checkQueuedActions retries; non-NAV delegates unchanged."""
+
+    def _swap(self, coin_from, coin_to):
+        offer = types.SimpleNamespace(coin_from=int(coin_from), coin_to=int(coin_to))
+        return types.SimpleNamespace(
+            getBidAndOffer=lambda bid_id, cursor, with_txns: (None, offer)
+        )
+
+    def _patch_redeem(self, fn):
+        self._orig = atomic_swap_1.redeemITx
+        atomic_swap_1.redeemITx = fn
+
+    def tearDown(self):
+        if hasattr(self, "_orig"):
+            atomic_swap_1.redeemITx = self._orig
+
+    def test_non_nav_delegates(self):
+        calls = []
+        self._patch_redeem(lambda self, bid_id, cursor: calls.append("d") or "ok")
+        r = nav_swap_1.redeemITx(self._swap(Coins.LTC, Coins.BTC), b"bid", None)
+        assert calls == ["d"]
+        assert r == "ok"
+
+    def test_nav_success_returns(self):
+        self._patch_redeem(lambda self, bid_id, cursor: "done")
+        assert nav_swap_1.redeemITx(self._swap(Coins.NAV, Coins.LTC), b"bid", None) == "done"
+
+    def test_nav_generic_exception_becomes_temporary(self):
+        def boom(self, bid_id, cursor):
+            raise RuntimeError("rpc down")
+
+        self._patch_redeem(boom)
+        with self.assertRaises(TemporaryError):
+            nav_swap_1.redeemITx(self._swap(Coins.NAV, Coins.LTC), b"bid", None)
+
+    def test_nav_temporary_error_not_double_wrapped(self):
+        def boom(self, bid_id, cursor):
+            raise TemporaryError("already temp")
+
+        self._patch_redeem(boom)
+        with self.assertRaises(TemporaryError) as cm:
+            nav_swap_1.redeemITx(self._swap(Coins.NAV, Coins.LTC), b"bid", None)
+        assert str(cm.exception) == "already temp"
+
+
+class TestNavSwapInterface(unittest.TestCase):
+    def test_swap_type_and_inheritance(self):
+        iface = nav_swap_1.NavSwapInterface()
+        assert iface.swap_type == SwapTypes.SECRET_HASH_BLSCT
+        assert isinstance(iface, atomic_swap_1.AtomicSwapInterface)
+        assert hasattr(iface, "getFundedInitiateTxTemplate")
+        assert hasattr(iface, "promoteMockTx")
+
 
 if __name__ == "__main__":
     unittest.main()
