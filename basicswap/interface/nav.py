@@ -862,11 +862,24 @@ class NAVInterface(BTCInterface):
             if self.isHTLCTxnSpent(bid.initiate_tx.script):
                 bid.setITxState(TxStates.TX_REDEEMED)
                 save_bid = True
-        elif coin_to == Coins.NAV and bid.getPTxState() != TxStates.TX_REDEEMED:
+        elif coin_to == Coins.NAV and bid.getPTxState() < TxStates.TX_REDEEMED:
             if self.isHTLCTxnSpent(bid.participate_tx.script):
+                # BLSCT hides the redeem preimage on-chain, so redeem vs refund is
+                # inferred from this node's own recorded action, then its role: the
+                # PTX has exactly two spenders — the offerer (redeem) and the bidder
+                # (refund). If I published neither, the spend is the counterparty's.
                 events = self._sc.getEvents(int(Concepts.BID), bid_id)
-                ptx_refund_published = any(e.event_type == int(EventLogTypes.PTX_REFUND_PUBLISHED) for e in events)
-                bid.setPTxState(TxStates.TX_REFUNDED if ptx_refund_published else TxStates.TX_REDEEMED)
+                i_refunded = any(e.event_type == int(EventLogTypes.PTX_REFUND_PUBLISHED) for e in events)
+                i_redeemed = any(e.event_type == int(EventLogTypes.PTX_REDEEM_PUBLISHED) for e in events)
+                if i_refunded:
+                    ptx_state = TxStates.TX_REFUNDED
+                elif i_redeemed:
+                    ptx_state = TxStates.TX_REDEEMED
+                elif bid.was_received:
+                    ptx_state = TxStates.TX_REFUNDED  # offerer didn't redeem -> bidder refunded
+                else:
+                    ptx_state = TxStates.TX_REDEEMED  # bidder didn't refund -> offerer redeemed
+                bid.setPTxState(ptx_state)
                 save_bid = True
         return save_bid
 
