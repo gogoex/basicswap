@@ -81,7 +81,7 @@ coin_prepare_modules = {
     "dash": dash_prepare,
     "decred": dcr_prepare,
     "dogecoin": doge_prepare,
-    "navcoin": nav_prepare,
+    "navio": nav_prepare,
     "namecoin": nmc_prepare,
     "monero": xmr_prepare,
     "wownero": wow_prepare,
@@ -140,7 +140,7 @@ known_coins = {
         firo_prepare.version_tag,
         firo_prepare.signers.keys(),
     ),
-    "navcoin": (
+    "navio": (
         nav_prepare.version,
         nav_prepare.version_tag,
         nav_prepare.signers.keys(),
@@ -157,9 +157,7 @@ known_coins = {
     ),
 }
 
-disabled_coins = [
-    "navcoin",
-]
+disabled_coins = []
 
 known_networks = ["smsg", "simplex", "nostr"]
 disabled_networks = []
@@ -1546,7 +1544,7 @@ def main():
         "pivx": pivx_prepare.getConfigSegment(prepare_ctx),
         "dash": dash_prepare.getConfigSegment(prepare_ctx),
         "firo": firo_prepare.getConfigSegment(prepare_ctx),
-        "navcoin": nav_prepare.getConfigSegment(prepare_ctx),
+        "navio": nav_prepare.getConfigSegment(prepare_ctx),
         "bitcoincash": bch_prepare.getConfigSegment(prepare_ctx),
         "dogecoin": doge_prepare.getConfigSegment(prepare_ctx),
     }

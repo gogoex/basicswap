@@ -12,7 +12,7 @@ import time
 from contextlib import contextmanager
 from enum import IntEnum, auto
 
-CURRENT_DB_VERSION = 41
+CURRENT_DB_VERSION = 42
 CURRENT_DB_DATA_VERSION = 10
 
 
@@ -272,6 +272,10 @@ class Bid(Table, StateRows):
     chain_a_height_start = Column("integer")  # Height of script chain before the swap
     # Height of scriptless chain before the swap
     chain_b_height_start = Column("integer")
+
+    nav_bidder_pubkey = Column("blob")
+    nav_offerer_pubkey = Column("blob")
+    nav_redeem_addr = Column("string")
 
     reject_code = Column("integer")
 
