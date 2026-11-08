@@ -115,6 +115,7 @@ const CoinManager = (function() {
             name: 'navio',
             displayName: 'Navio',
             aliases: ['nav', 'navio'],
+            priceKey: 'navio',
             coingeckoId: 'nav-coin',
             cryptocompareId: 'NAV',
             usesCryptoCompare: false,
