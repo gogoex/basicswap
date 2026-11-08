@@ -12,7 +12,7 @@ from basicswap.interface.prepare_util import (
     PrepareContext,
 )
 
-NAVIO_VERSION = os.getenv("NAVIO_VERSION", "0.1.5")
+NAVIO_VERSION = os.getenv("NAVIO_VERSION", "0.2.2")
 NAVIO_VERSION_TAG = os.getenv("NAVIO_VERSION_TAG", "")
 navio_signers = {"navio_builder": ("5E542D3BDB5F4305762330B37A17AA0838680153",)}
 
