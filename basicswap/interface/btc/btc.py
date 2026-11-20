@@ -3264,7 +3264,8 @@ class BTCInterface(FeeValidator, Secp256k1Interface):
         with BTCInterface._scantxoutset_lock:
             for attempt in range(self._MAX_SCANTXOUTSET_RETRIES):
                 try:
-                    return self.rpc("scantxoutset", ["start", descriptors])
+                    # TODO NAVIO remove timeout parameter later
+                    return self.rpc("scantxoutset", ["start", descriptors], timeout=120)
                 except ValueError as e:
                     if "Scan already in progress" in str(e):
                         self._log.warning(
