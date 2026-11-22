@@ -559,8 +559,8 @@ class NAVInterface(BTCInterface):
         # for txs before signing, use decodeblsctrawtransaction
         return self.rpc("decoderawtransaction", [tx_hex])
 
-    def detectNavItxRefund(self, bid) -> bool:
-        # NAV ITX may be refunded while waiting for PTX confirmation.
+    def detectNavItxSpend(self, bid) -> bool:
+        # NAV ITX may be redeemed or refunded while waiting for PTX confirmation.
         # BLSCT outputs have no visible address, so check via isHTLCTxnSpent (listblsctunspent).
         if (
             bid.initiate_tx is not None
@@ -575,7 +575,14 @@ class NAVInterface(BTCInterface):
             if any(
                 e.event_type == int(EventLogTypes.ITX_REDEEM_PUBLISHED) for e in events
             ):
-                return False
+                # Our own redeem spent it. If the PTX was spent before this node saw it
+                # confirmed, the bid never reaches SWAP_PARTICIPATING, where
+                # handleSwapParticipating would mark the ITX redeemed
+                self._sc.log.info(
+                    f"NAV ITx spent (redeemed) in SWAP_INITIATED for bid {self._sc.log.id(bid.bid_id)}, marking TX_REDEEMED"
+                )
+                bid.setITxState(TxStates.TX_REDEEMED)
+                return True
             self._sc.log.info(
                 f"NAV ITx spent (refunded) in SWAP_INITIATED for bid {self._sc.log.id(bid.bid_id)}, marking TX_REFUNDED"
             )

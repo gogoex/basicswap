@@ -503,13 +503,14 @@ class TestHandleSwapParticipatingLabel(unittest.TestCase):
         assert self._run(bid, Coins.NAV, Coins.LTC, []) is False
 
 
-class TestDetectNavItxRefund(unittest.TestCase):
-    """detectNavItxRefund must not mislabel this node's own ITX redeem as a refund.
+class TestDetectNavItxSpend(unittest.TestCase):
+    """detectNavItxSpend records an ITX spend seen in SWAP_INITIATED.
 
     The ITX HTLC output has two spenders (bidder redeem, offerer refund). This
-    early detector runs before handleSwapParticipating; when our own in-flight
-    redeem spends the ITX but the ITX state has not yet flipped to TX_REDEEMED,
-    the spend must not be recorded as TX_REFUNDED.
+    early detector runs before handleSwapParticipating; when our own redeem
+    spends the ITX it must be recorded as TX_REDEEMED, not TX_REFUNDED. The bid
+    can stay in SWAP_INITIATED if the PTX was spent before this node saw it
+    confirmed, so handleSwapParticipating may never run.
     """
 
     def setUp(self):
@@ -521,14 +522,14 @@ class TestDetectNavItxRefund(unittest.TestCase):
             getEvents=lambda ct, bid_id: events,
             log=types.SimpleNamespace(id=lambda x: x, info=lambda *a, **k: None),
         )
-        return self.ci.detectNavItxRefund(bid)
+        return self.ci.detectNavItxSpend(bid)
 
-    def test_spent_with_own_redeem_event_is_not_refund(self):
-        # Regression: our own redeem raced ahead of the ITX state update.
+    def test_spent_with_own_redeem_event_is_redeemed(self):
+        # Regression: our own redeem spent the ITX, bid stuck in SWAP_INITIATED.
         bid = _mk_bid(itx_state=TxStates.TX_CONFIRMED)
         bid.bid_id = b"bid"
-        assert self._run(bid, [_ev(EventLogTypes.ITX_REDEEM_PUBLISHED)]) is False
-        assert bid.getITxState() == TxStates.TX_CONFIRMED  # unchanged
+        assert self._run(bid, [_ev(EventLogTypes.ITX_REDEEM_PUBLISHED)]) is True
+        assert bid.getITxState() == TxStates.TX_REDEEMED
 
     def test_spent_without_redeem_event_is_refund(self):
         bid = _mk_bid(itx_state=TxStates.TX_CONFIRMED)

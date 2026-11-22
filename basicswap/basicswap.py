@@ -10453,7 +10453,7 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     self.participateTxnConfirmed(bid_id, bid, offer)
                     save_bid = True
             if coin_from == Coins.NAV:
-                if self.ci(coin_from).detectNavItxRefund(bid):
+                if self.ci(coin_from).detectNavItxSpend(bid):
                     save_bid = True
         elif state == BidStates.SWAP_PARTICIPATING:
             # Waiting for initiate txn spend
