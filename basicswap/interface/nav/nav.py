@@ -592,6 +592,21 @@ class NAVInterface(BTCInterface):
             locktime_bytes = script[65 : 65 + push_size]
         return int.from_bytes(locktime_bytes, byteorder="little")
 
+    def findConfirmedTxnByHash(self, outid: str):
+        # outid comes from getTxid, BLSCT txids change when the node aggregates txns
+        try:
+            rv = self.rpc_wallet("getblsctoutput", [outid])
+        except Exception as e:
+            self._log.debug(
+                f"findConfirmedTxnByHash getblsctoutput failed: {outid}: {e}"
+            )
+            return None
+        confirmations: int = rv.get("confirmations", 0)
+        if confirmations < self.blocks_confirmed:
+            return None
+        height: int = self.getChainHeight() - confirmations + 1
+        return {"txid": outid, "amount": 0, "height": height}
+
     # Workaround: naviod crashes with getblock verbosity=2 (MoneyRange assertion). Remove once naviod fixes.
     def getBlockWithTxns(self, block_hash: str):
         # naviod crashes with getblock with verbosity 2 (MoneyRange bug),
@@ -761,6 +776,16 @@ class NAVInterface(BTCInterface):
 
     def getSeedHash(self, seed: bytes) -> bytes:
         return seed
+
+    def getTxid(self, tx) -> bytes:
+        # BLSCT txids change when the node aggregates txns, so a txn is identified
+        # by the outid of its first non-fee output instead
+        if isinstance(tx, bytes):
+            tx = tx.hex()
+        for out in self.describeTx(tx)["vout"]:
+            if out.get("predicate") != "PAY_FEE":
+                return bytes.fromhex(out["hash"])
+        raise ValueError("BLSCT txn has no non-fee output")
 
     def getTxLocktime(self, tx_data) -> int:
         # tx_data is the initiate (HTLC) tx for NAV; the BLSCT refund tx can't be
