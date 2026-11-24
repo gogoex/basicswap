@@ -25,7 +25,8 @@ from basicswap.basicswap import (
     SwapTypes,
     TxStates,
 )
-from basicswap.basicswap_util import TxLockTypes
+from basicswap.basicswap_util import EventLogTypes, TxLockTypes
+from basicswap.db import Concepts
 from tests.basicswap.util.common import (
     make_rpc_func,
     read_json_api,
@@ -164,6 +165,21 @@ def run_test_success_path(self, coin_from: Coins, coin_to: Coins):
     )
 
 
+def check_event_order(swap_client, bid_id: bytes, expected, forbidden=()) -> None:
+    # expected events must appear in this order, other events may come in between
+    events = sorted(
+        swap_client.getEvents(int(Concepts.BID), bid_id),
+        key=lambda e: (e.created_at, e.event_id),
+    )
+    seen = [EventLogTypes(e.event_type) for e in events]
+    logging.info(f"Events for bid {bid_id.hex()}: {[e.name for e in seen]}")
+    remaining = iter(seen)
+    for event_type in expected:
+        assert event_type in remaining, f"{event_type.name} missing or out of order"
+    for event_type in forbidden:
+        assert event_type not in seen, f"unexpected {event_type.name}"
+
+
 def run_test_bad_ptx(self, coin_from: Coins, coin_to: Coins):
     logging.info(f"---------- Test bad ptx {coin_from.name} to {coin_to.name}")
 
@@ -216,6 +232,20 @@ def run_test_bad_ptx(self, coin_from: Coins, coin_to: Coins):
     js_1_bid = read_json_api(1800 + node_to, "bids/{}".format(bid_id.hex()))
     assert js_0_bid["itx_state"] == "Refunded"
     assert js_1_bid["ptx_state"] == "Refunded"
+
+    # offerer doesn't redeem the invalid PTX: both sides refund their own txn
+    check_event_order(
+        swap_clients[node_from],
+        bid_id,
+        [EventLogTypes.ITX_PUBLISHED, EventLogTypes.ITX_REFUND_PUBLISHED],
+        [EventLogTypes.PTX_REDEEM_PUBLISHED, EventLogTypes.ITX_REDEEM_PUBLISHED],
+    )
+    check_event_order(
+        swap_clients[node_to],
+        bid_id,
+        [EventLogTypes.PTX_PUBLISHED, EventLogTypes.PTX_REFUND_PUBLISHED],
+        [EventLogTypes.PTX_REDEEM_PUBLISHED, EventLogTypes.ITX_REDEEM_PUBLISHED],
+    )
 
     js_0 = read_json_api(1800 + node_from)
     js_1 = read_json_api(1800 + node_to)
@@ -286,6 +316,24 @@ def run_test_itx_refund(self, coin_from: Coins, coin_to: Coins):
         bid_id,
         BidStates.SWAP_COMPLETED,
         wait_for=60,
+    )
+
+    # bidder doesn't redeem the ITX: offerer redeems the PTX, then refunds the ITX
+    check_event_order(
+        swap_clients[node_from],
+        bid_id,
+        [
+            EventLogTypes.ITX_PUBLISHED,
+            EventLogTypes.PTX_REDEEM_PUBLISHED,
+            EventLogTypes.ITX_REFUND_PUBLISHED,
+        ],
+        [EventLogTypes.ITX_REDEEM_PUBLISHED, EventLogTypes.PTX_REFUND_PUBLISHED],
+    )
+    check_event_order(
+        swap_clients[node_to],
+        bid_id,
+        [EventLogTypes.PTX_PUBLISHED],
+        [EventLogTypes.ITX_REDEEM_PUBLISHED, EventLogTypes.PTX_REFUND_PUBLISHED],
     )
 
 
