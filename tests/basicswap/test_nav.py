@@ -273,9 +273,17 @@ class TestIsHTLCTxnSpent(unittest.TestCase):
         # bidder-side stored ITX script (non-NAV fake) sharing the same hash + locktime
         self.script = bytes(self.ci.createFakeNonNavHTLCScript(secret_hash, lock_val))
 
-    def _stub(self, utxos, gettxout=None):
+    def _stub(self, utxos, gettxout=None, confirmations=1):
         self.ci._listBlsctUnspent = lambda: utxos
         self.ci.rpc = lambda method, params=None: gettxout
+
+        def getblsctoutput(method, params=None):
+            assert method == "getblsctoutput"
+            if confirmations is None:
+                raise RuntimeError("Output not found")
+            return {"confirmations": confirmations}
+
+        self.ci.rpc_wallet = getblsctoutput
 
     def test_match_in_utxo_set_is_unspent(self):
         self._stub(
@@ -309,6 +317,35 @@ class TestIsHTLCTxnSpent(unittest.TestCase):
     def test_empty_utxo_list_is_spent(self):
         self._stub([])
         assert self.ci.isHTLCTxnSpent(self.script) is True
+
+    def test_not_listed_spent_in_mempool_only_is_unspent(self):
+        # Wallet drops the output once its spend is in the mempool, gettxout with
+        # include_mempool=False still returns it until the spend is mined
+        self._stub([], gettxout={"value": 1})
+        assert self.ci.isHTLCTxnSpent(self.script, bytes.fromhex("ab")) is False
+
+    def test_not_listed_spend_mined_is_spent(self):
+        self._stub([], gettxout=None)
+        assert self.ci.isHTLCTxnSpent(self.script, bytes.fromhex("ab")) is True
+
+    # gettxout with include_mempool=False returns nothing for an output not mined
+    # yet, getblsctoutput's confirmations tell it apart from a spent one
+    def test_listed_not_mined_is_unspent(self):
+        self._stub(
+            [{"scriptPubKey": self.HTLC_HEX, "outid": "abc"}],
+            gettxout=None,
+            confirmations=0,
+        )
+        assert self.ci.isHTLCTxnSpent(self.script) is False
+
+    def test_not_listed_not_mined_is_unspent(self):
+        self._stub([], gettxout=None, confirmations=0)
+        assert self.ci.isHTLCTxnSpent(self.script, bytes.fromhex("ab")) is False
+
+    def test_not_listed_unknown_output_is_unspent(self):
+        # getblsctoutput fails: not known to be mined, so not reported spent
+        self._stub([], gettxout=None, confirmations=None)
+        assert self.ci.isHTLCTxnSpent(self.script, bytes.fromhex("ab")) is False
 
     def test_exception_returns_false(self):
         def boom():
@@ -392,8 +429,12 @@ def _mk_bid(
 ):
     b = types.SimpleNamespace(
         was_received=was_received,
-        participate_tx=types.SimpleNamespace(script=b"ptx") if has_ptx else None,
-        initiate_tx=types.SimpleNamespace(script=b"itx") if has_itx else None,
+        participate_tx=(
+            types.SimpleNamespace(script=b"ptx", txid=None) if has_ptx else None
+        ),
+        initiate_tx=(
+            types.SimpleNamespace(script=b"itx", txid=None) if has_itx else None
+        ),
     )
     b._ptx = ptx_state
     b._itx = itx_state
@@ -425,7 +466,7 @@ class TestHandleSwapParticipatingLabel(unittest.TestCase):
 
     def setUp(self):
         self.ci = ci_nav()
-        self.ci.isHTLCTxnSpent = lambda script: True  # spent
+        self.ci.isHTLCTxnSpent = lambda script, outid=None: True  # spent
 
     def _run(self, bid, coin_from, coin_to, events):
         self.ci._sc = types.SimpleNamespace(getEvents=lambda ct, bid_id: events)
@@ -465,7 +506,7 @@ class TestHandleSwapParticipatingLabel(unittest.TestCase):
         assert bid.getPTxState() == TxStates.TX_REFUNDED  # unchanged, no re-append
 
     def test_ptx_not_spent_no_change(self):
-        self.ci.isHTLCTxnSpent = lambda script: False
+        self.ci.isHTLCTxnSpent = lambda script, outid=None: False
         bid = _mk_bid(ptx_state=TxStates.TX_CONFIRMED, was_received=True)
         assert self._run(bid, Coins.LTC, Coins.NAV, []) is False
         assert bid.getPTxState() == TxStates.TX_CONFIRMED
@@ -503,6 +544,310 @@ class TestHandleSwapParticipatingLabel(unittest.TestCase):
         assert self._run(bid, Coins.NAV, Coins.LTC, []) is False
 
 
+class TestHtlcSpendInMempool(unittest.TestCase):
+    """A NAV HTLC spend must not be recorded until it is mined.
+
+    Regression: in a NAV->LTC refund test both nodes marked the ITX TX_REFUNDED
+    and completed the swap while the refund was only in the mempool:
+    listblsctunspent drops an output as soon as its spend is in the mempool and
+    gettxout hides it with the default include_mempool=true.
+    """
+
+    HTLC_HEX = TestIsHTLCTxnSpent.HTLC_HEX
+    OUTID = bytes.fromhex(
+        "b8b624c618200a42dc4a91912086dcee0cc37b2e9c4f63d674914c6bb76be210"
+    )
+
+    def setUp(self):
+        self.ci = ci_nav()
+        spk = bytes.fromhex(self.HTLC_HEX)
+        secret_hash = atomic_swap_1.extractScriptSecretHash(spk)
+        lock_val = self.ci.extractHTLCLockVal(spk, is_nav=True)
+        self.script = bytes(self.ci.createFakeNonNavHTLCScript(secret_hash, lock_val))
+        self.mined = False
+        self.listed = False
+
+        def fake_rpc(method, params=None):
+            # navio gettxout: an output spent in the mempool is hidden unless
+            # include_mempool is false, an output spent in a block is always gone
+            assert method == "gettxout"
+            include_mempool = params[1] if len(params) > 1 else True
+            if self.mined or include_mempool:
+                return None
+            return {"value": 1}
+
+        self.ci.rpc = fake_rpc
+        # the HTLC output itself was mined before the spend
+        self.ci.rpc_wallet = lambda method, params=None: {"confirmations": 1}
+        self.ci._listBlsctUnspent = lambda: (
+            [{"scriptPubKey": self.HTLC_HEX, "outid": self.OUTID.hex()}]
+            if self.listed
+            else []
+        )
+
+    def _bid(self, was_received, leg):
+        bid = _mk_bid(
+            itx_state=TxStates.TX_CONFIRMED if leg == "itx" else None,
+            ptx_state=TxStates.TX_CONFIRMED if leg == "ptx" else None,
+            was_received=was_received,
+        )
+        tx = bid.initiate_tx if leg == "itx" else bid.participate_tx
+        tx.script = self.script
+        tx.txid = self.OUTID
+        return bid
+
+    def _run(self, bid, coin_from, coin_to, events):
+        self.ci._sc = types.SimpleNamespace(getEvents=lambda ct, bid_id: events)
+        return self.ci.handleSwapParticipating(b"bid", bid, coin_from, coin_to)
+
+    def _check(self, was_received, leg, events, expected):
+        # NAV->LTC: NAV is the ITX leg, LTC->NAV: NAV is the PTX leg
+        coin_from, coin_to = (
+            (Coins.NAV, Coins.LTC) if leg == "itx" else (Coins.LTC, Coins.NAV)
+        )
+        bid = self._bid(was_received, leg)
+        get_state = bid.getITxState if leg == "itx" else bid.getPTxState
+        # spend in the mempool only: nothing recorded yet
+        assert self._run(bid, coin_from, coin_to, events) is False
+        assert get_state() == TxStates.TX_CONFIRMED
+        # spend mined
+        self.mined = True
+        assert self._run(bid, coin_from, coin_to, events) is True
+        assert get_state() == expected
+
+    # NAV->LTC, offerer doesn't redeem the PTX: offerer refunds the NAV ITX
+    def test_nav_ltc_offerer_no_redeem_offerer(self):
+        events = [_ev(EventLogTypes.ITX_REFUND_PUBLISHED)]
+        self._check(True, "itx", events, TxStates.TX_REFUNDED)
+
+    def test_nav_ltc_offerer_no_redeem_bidder(self):
+        self._check(False, "itx", [], TxStates.TX_REFUNDED)
+
+    # NAV->LTC, bidder doesn't redeem the ITX: offerer refunds the NAV ITX
+    def test_nav_ltc_bidder_no_redeem_offerer(self):
+        events = [
+            _ev(EventLogTypes.PTX_REDEEM_PUBLISHED),
+            _ev(EventLogTypes.ITX_REFUND_PUBLISHED),
+        ]
+        self._check(True, "itx", events, TxStates.TX_REFUNDED)
+
+    def test_nav_ltc_bidder_no_redeem_bidder(self):
+        self._check(False, "itx", [], TxStates.TX_REFUNDED)
+
+    # LTC->NAV, offerer doesn't redeem the PTX: bidder refunds the NAV PTX
+    def test_ltc_nav_offerer_no_redeem_offerer(self):
+        self._check(True, "ptx", [], TxStates.TX_REFUNDED)
+
+    def test_ltc_nav_offerer_no_redeem_bidder(self):
+        events = [_ev(EventLogTypes.PTX_REFUND_PUBLISHED)]
+        self._check(False, "ptx", events, TxStates.TX_REFUNDED)
+
+    # LTC->NAV, bidder doesn't redeem the ITX: offerer redeemed the NAV PTX
+    def test_ltc_nav_bidder_no_redeem_offerer(self):
+        events = [_ev(EventLogTypes.PTX_REDEEM_PUBLISHED)]
+        self._check(True, "ptx", events, TxStates.TX_REDEEMED)
+
+    def test_ltc_nav_bidder_no_redeem_bidder(self):
+        self._check(False, "ptx", [], TxStates.TX_REDEEMED)
+
+    def test_listed_output_spent_in_mempool_is_unspent(self):
+        # watch-only wallet keeps listing the output, gettxout must ignore the mempool
+        self.listed = True
+        self._check(False, "itx", [], TxStates.TX_REFUNDED)
+
+
+class TestSwapEventOrder(unittest.TestCase):
+    """Replays each refund case on each node in the order the live tests produced
+    its events, and checks when the NAV leg changes state.
+
+    Each step publishes events (or delivers the preimage), moves the NAV HTLC
+    spend along (unspent, in the mempool, mined), then runs
+    handleSwapParticipating as checkBidState does in SWAP_PARTICIPATING. The NAV
+    leg must change state exactly once, at the step its spend is mined.
+    """
+
+    HTLC_HEX = TestHtlcSpendInMempool.HTLC_HEX
+    OUTID = TestHtlcSpendInMempool.OUTID
+    BID_ID = bytes(range(28))
+    SECRET = bytes(32)
+
+    UNSPENT, MEMPOOL, MINED = "unspent", "mempool", "mined"
+    PREIMAGE = "preimage"  # offerer's NAV_HTLC_PREIMAGE message arrives
+
+    ITX_REFUND = EventLogTypes.ITX_REFUND_PUBLISHED
+    PTX_REDEEM = EventLogTypes.PTX_REDEEM_PUBLISHED
+    PTX_REFUND = EventLogTypes.PTX_REFUND_PUBLISHED
+
+    def setUp(self):
+        # same fake navio node as TestHtlcSpendInMempool
+        TestHtlcSpendInMempool.setUp(self)
+        self.events = []
+        self.swaps_in_progress = {}
+        log = types.SimpleNamespace(
+            id=lambda x: x,
+            info=lambda *a, **k: None,
+            warning=lambda *a, **k: None,
+            debug=lambda *a, **k: None,
+        )
+        self.ci._sc = types.SimpleNamespace(
+            getEvents=lambda ct, bid_id: list(self.events),
+            getSmsgMsgBytes=lambda msg: msg,
+            swaps_in_progress=self.swaps_in_progress,
+            get_short_delay_event_seconds=lambda: 0,
+            createAction=lambda delay, action_type, bid_id: None,
+            saveBid=lambda bid_id, bid: None,
+            log=log,
+        )
+
+    def _replay(self, was_received, leg, steps, initiated=False):
+        """Return the NAV leg's state changes as (step index, new state).
+
+        initiated: the bid is still in SWAP_INITIATED with the PTX TX_SENT, so
+        detectNavPtxSpend runs instead of handleSwapParticipating.
+        """
+        coin_from, coin_to = (
+            (Coins.NAV, Coins.LTC) if leg == "itx" else (Coins.LTC, Coins.NAV)
+        )
+        bid = TestHtlcSpendInMempool._bid(self, was_received, leg)
+        bid.bid_id = self.BID_ID
+        if initiated:
+            bid._ptx = TxStates.TX_SENT
+        self.swaps_in_progress[self.BID_ID] = (bid, None)
+
+        changes = []
+        step_no = [0]
+        attr = "setITxState" if leg == "itx" else "setPTxState"
+        set_state = getattr(bid, attr)
+
+        def record(state):
+            changes.append((step_no[0], state))
+            set_state(state)
+
+        setattr(bid, attr, record)
+
+        for i, (spend, *items) in enumerate(steps):
+            step_no[0] = i
+            self.listed = spend == self.UNSPENT
+            self.mined = spend == self.MINED
+            for item in items:
+                if item == self.PREIMAGE:
+                    self.ci.processNavHtlcPreimage(self.BID_ID + self.SECRET)
+                else:
+                    self.events.append(_ev(item))
+            if initiated:
+                self.ci.detectNavPtxSpend(bid.bid_id, bid, coin_from)
+            else:
+                self.ci.handleSwapParticipating(bid.bid_id, bid, coin_from, coin_to)
+        return changes
+
+    # NAV->LTC, offerer doesn't redeem the PTX: offerer refunds the NAV ITX
+    def test_nav_ltc_offerer_no_redeem_offerer(self):
+        steps = [
+            (self.UNSPENT,),
+            (self.MEMPOOL, self.ITX_REFUND),
+            (self.MINED,),
+            (self.MINED,),
+        ]
+        changes = self._replay(True, "itx", steps)
+        assert changes == [(2, TxStates.TX_REFUNDED)], changes
+
+    def test_nav_ltc_offerer_no_redeem_bidder(self):
+        # the bidder refunds the LTC PTX first, it must not affect the NAV ITX
+        steps = [
+            (self.UNSPENT, self.PTX_REFUND),
+            (self.MEMPOOL,),
+            (self.MINED,),
+            (self.MINED,),
+        ]
+        changes = self._replay(False, "itx", steps)
+        assert changes == [(2, TxStates.TX_REFUNDED)], changes
+
+    # NAV->LTC, bidder doesn't redeem the ITX: offerer redeems the LTC PTX,
+    # then refunds the NAV ITX
+    def test_nav_ltc_bidder_no_redeem_offerer(self):
+        steps = [
+            (self.UNSPENT, self.PTX_REDEEM),
+            (self.MEMPOOL, self.ITX_REFUND),
+            (self.MINED,),
+            (self.MINED,),
+        ]
+        changes = self._replay(True, "itx", steps)
+        assert changes == [(2, TxStates.TX_REFUNDED)], changes
+
+    def test_nav_ltc_bidder_no_redeem_bidder(self):
+        steps = [(self.UNSPENT,), (self.MEMPOOL,), (self.MINED,), (self.MINED,)]
+        changes = self._replay(False, "itx", steps)
+        assert changes == [(2, TxStates.TX_REFUNDED)], changes
+
+    # LTC->NAV, offerer doesn't redeem the PTX: bidder refunds the NAV PTX,
+    # later the offerer refunds the LTC ITX
+    def test_ltc_nav_offerer_no_redeem_offerer(self):
+        steps = [
+            (self.UNSPENT,),
+            (self.MEMPOOL,),
+            (self.MINED,),
+            (self.MINED, self.ITX_REFUND),
+        ]
+        changes = self._replay(True, "ptx", steps)
+        assert changes == [(2, TxStates.TX_REFUNDED)], changes
+
+    def test_ltc_nav_offerer_no_redeem_bidder(self):
+        steps = [
+            (self.UNSPENT,),
+            (self.MEMPOOL, self.PTX_REFUND),
+            (self.MINED,),
+            (self.MINED, self.ITX_REFUND),
+        ]
+        changes = self._replay(False, "ptx", steps)
+        assert changes == [(2, TxStates.TX_REFUNDED)], changes
+
+    # LTC->NAV, bidder doesn't redeem the ITX: offerer redeems the NAV PTX,
+    # later refunds the LTC ITX
+    def test_ltc_nav_bidder_no_redeem_offerer(self):
+        steps = [
+            (self.UNSPENT,),
+            (self.MEMPOOL, self.PTX_REDEEM),
+            (self.MINED,),
+            (self.MINED, self.ITX_REFUND),
+        ]
+        changes = self._replay(True, "ptx", steps)
+        assert changes == [(2, TxStates.TX_REDEEMED)], changes
+
+    def test_ltc_nav_bidder_no_redeem_bidder_no_preimage(self):
+        steps = [
+            (self.UNSPENT,),
+            (self.MEMPOOL,),
+            (self.MINED,),
+            (self.MINED, self.ITX_REFUND),
+        ]
+        changes = self._replay(False, "ptx", steps)
+        assert changes == [(2, TxStates.TX_REDEEMED)], changes
+
+    def test_ltc_nav_bidder_no_redeem_bidder(self):
+        # the preimage arrives while the offerer's redeem is still in the
+        # mempool, the PTX must wait for the redeem to be mined
+        steps = [
+            (self.UNSPENT,),
+            (self.MEMPOOL, self.PREIMAGE),
+            (self.MINED,),
+            (self.MINED, self.ITX_REFUND),
+        ]
+        changes = self._replay(False, "ptx", steps)
+        assert changes == [(2, TxStates.TX_REDEEMED)], changes
+
+    def test_ltc_nav_bidder_no_redeem_bidder_stuck_initiated(self):
+        # the offerer's redeem reached the mempool before the bidder saw its PTX
+        # confirm, so the bid stays in SWAP_INITIATED and detectNavPtxSpend runs
+        steps = [
+            (self.MEMPOOL, self.PREIMAGE),
+            (self.MEMPOOL,),
+            (self.MINED,),
+            (self.MINED, self.ITX_REFUND),
+        ]
+        changes = self._replay(False, "ptx", steps, initiated=True)
+        assert changes == [(2, TxStates.TX_REDEEMED)], changes
+
+
 class TestDetectNavItxSpend(unittest.TestCase):
     """detectNavItxSpend records an ITX spend seen in SWAP_INITIATED.
 
@@ -515,7 +860,7 @@ class TestDetectNavItxSpend(unittest.TestCase):
 
     def setUp(self):
         self.ci = ci_nav()
-        self.ci.isHTLCTxnSpent = lambda script: True  # spent
+        self.ci.isHTLCTxnSpent = lambda script, outid=None: True  # spent
 
     def _run(self, bid, events):
         self.ci._sc = types.SimpleNamespace(
@@ -538,7 +883,7 @@ class TestDetectNavItxSpend(unittest.TestCase):
         assert bid.getITxState() == TxStates.TX_REFUNDED
 
     def test_not_spent_no_change(self):
-        self.ci.isHTLCTxnSpent = lambda script: False
+        self.ci.isHTLCTxnSpent = lambda script, outid=None: False
         bid = _mk_bid(itx_state=TxStates.TX_CONFIRMED)
         bid.bid_id = b"bid"
         assert self._run(bid, []) is False
@@ -548,6 +893,73 @@ class TestDetectNavItxSpend(unittest.TestCase):
         bid = _mk_bid(itx_state=TxStates.TX_REDEEMED)
         bid.bid_id = b"bid"
         assert self._run(bid, []) is False
+
+
+class TestDetectNavPtxSpend(unittest.TestCase):
+    """detectNavPtxSpend records a NAV PTX spend seen in SWAP_INITIATED.
+
+    The bidder can miss its PTX confirming when the offerer's redeem reaches the
+    mempool first, so the bid never reaches SWAP_PARTICIPATING. The PTX must
+    still be marked, and only once the spend is mined.
+    """
+
+    HTLC_HEX = TestHtlcSpendInMempool.HTLC_HEX
+    OUTID = TestHtlcSpendInMempool.OUTID
+
+    def setUp(self):
+        # same fake navio node as TestHtlcSpendInMempool, spend mined
+        TestHtlcSpendInMempool.setUp(self)
+        self.mined = True
+        self.events = []
+        self.ci._sc = types.SimpleNamespace(getEvents=lambda ct, bid_id: self.events)
+
+    def _bid(self, was_received, state):
+        bid = TestHtlcSpendInMempool._bid(self, was_received, "ptx")
+        bid._ptx = state
+        return bid
+
+    def _run(self, bid):
+        return self.ci.detectNavPtxSpend(b"bid", bid, Coins.LTC)
+
+    def test_bidder_sent_spend_mined_is_redeemed(self):
+        bid = self._bid(False, TxStates.TX_SENT)
+        assert self._run(bid) is True
+        assert bid.getPTxState() == TxStates.TX_REDEEMED
+
+    def test_offerer_own_redeem_is_redeemed(self):
+        self.events = [_ev(EventLogTypes.PTX_REDEEM_PUBLISHED)]
+        bid = self._bid(True, TxStates.TX_CONFIRMED)
+        assert self._run(bid) is True
+        assert bid.getPTxState() == TxStates.TX_REDEEMED
+
+    def test_spend_in_mempool_no_change(self):
+        self.mined = False
+        bid = self._bid(False, TxStates.TX_SENT)
+        assert self._run(bid) is False
+        assert bid.getPTxState() == TxStates.TX_SENT
+
+    def test_ptx_not_mined_no_change(self):
+        # gettxout returns nothing for an unmined output too
+        self.ci.rpc_wallet = lambda method, params=None: {"confirmations": 0}
+        bid = self._bid(False, TxStates.TX_SENT)
+        assert self._run(bid) is False
+        assert bid.getPTxState() == TxStates.TX_SENT
+
+    def test_no_outid_no_change(self):
+        bid = self._bid(False, TxStates.TX_SENT)
+        bid.participate_tx.txid = None
+        assert self._run(bid) is False
+        assert bid.getPTxState() == TxStates.TX_SENT
+
+    def test_unset_state_no_change(self):
+        bid = self._bid(True, None)
+        assert self._run(bid) is False
+        assert bid.getPTxState() is None
+
+    def test_terminal_state_skipped(self):
+        bid = self._bid(False, TxStates.TX_REDEEMED)
+        assert self._run(bid) is False
+        assert bid.getPTxState() == TxStates.TX_REDEEMED
 
 
 class TestProcessNavHtlcPreimageLength(unittest.TestCase):

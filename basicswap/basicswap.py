@@ -10455,6 +10455,9 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             if coin_from == Coins.NAV:
                 if self.ci(coin_from).detectNavItxSpend(bid):
                     save_bid = True
+            elif coin_to == Coins.NAV:
+                if self.ci(coin_to).detectNavPtxSpend(bid_id, bid, coin_from):
+                    save_bid = True
         elif state == BidStates.SWAP_PARTICIPATING:
             # Waiting for initiate txn spend
             if coin_from == Coins.NAV or coin_to == Coins.NAV:

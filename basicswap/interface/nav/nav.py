@@ -565,7 +565,7 @@ class NAVInterface(BTCInterface):
         if (
             bid.initiate_tx is not None
             and bid.getITxState() in (TxStates.TX_SENT, TxStates.TX_CONFIRMED)
-            and self.isHTLCTxnSpent(bid.initiate_tx.script)
+            and self.isHTLCTxnSpent(bid.initiate_tx.script, bid.initiate_tx.txid)
         ):
             # The ITX HTLC has two spenders: bidder (redeem) and offerer (refund).
             # A spend is only a refund if this node did not redeem it — otherwise our
@@ -589,6 +589,19 @@ class NAVInterface(BTCInterface):
             bid.setITxState(TxStates.TX_REFUNDED)
             return True
         return False
+
+    def detectNavPtxSpend(self, bid_id, bid, coin_from) -> bool:
+        # The bidder can miss its NAV PTX confirming when the offerer's redeem
+        # reaches the mempool first (listblsctunspent drops the output), so the
+        # bid stays in SWAP_INITIATED, where handleSwapParticipating doesn't run.
+        # Without the outid isHTLCTxnSpent can't tell spent from not listed
+        if (
+            bid.participate_tx is None
+            or bid.participate_tx.txid is None
+            or bid.getPTxState() not in (TxStates.TX_SENT, TxStates.TX_CONFIRMED)
+        ):
+            return False
+        return self.handleSwapParticipating(bid_id, bid, coin_from, Coins.NAV)
 
     def extractHTLCLockVal(self, script: bytes, is_nav: bool) -> int:
         if is_nav:
@@ -840,7 +853,7 @@ class NAVInterface(BTCInterface):
             and bid.initiate_tx is not None
             and bid.getITxState() < TxStates.TX_REDEEMED
         ):
-            if self.isHTLCTxnSpent(bid.initiate_tx.script):
+            if self.isHTLCTxnSpent(bid.initiate_tx.script, bid.initiate_tx.txid):
                 # ITX spenders: bidder (redeem) and offerer (refund, its own ITX).
                 events = self._sc.getEvents(int(Concepts.BID), bid_id)
                 i_refunded = any(
@@ -866,7 +879,7 @@ class NAVInterface(BTCInterface):
                 bid.setITxState(itx_state)
                 save_bid = True
         elif coin_to == Coins.NAV and bid.getPTxState() < TxStates.TX_REDEEMED:
-            if self.isHTLCTxnSpent(bid.participate_tx.script):
+            if self.isHTLCTxnSpent(bid.participate_tx.script, bid.participate_tx.txid):
                 # BLSCT hides the redeem preimage on-chain, so redeem vs refund is
                 # inferred from this node's own recorded action, then its role: the
                 # PTX has exactly two spenders — the offerer (redeem) and the bidder
@@ -909,6 +922,17 @@ class NAVInterface(BTCInterface):
             else:
                 self._log.debug(f"setblsctseed failed: {e}")
                 raise
+
+    def _isHTLCOutputMined(self, outid: str) -> bool:
+        # gettxout with include_mempool=false returns nothing both for an output
+        # spent in a block and for one not mined yet. getblsctoutput still reports
+        # the confirmations of a spent output, so it tells the two apart
+        try:
+            rv = self.rpc_wallet("getblsctoutput", [outid])
+        except Exception as e:
+            self._log.debug(f"_isHTLCOutputMined getblsctoutput failed: {outid}: {e}")
+            return False
+        return rv.get("confirmations", 0) >= 1
 
     def _isHTLCScript(self, script: str) -> bool:
         """
@@ -1015,13 +1039,14 @@ class NAVInterface(BTCInterface):
             and all_consumed()
         )
 
-    def isHTLCTxnSpent(self, script: bytes) -> bool:
+    def isHTLCTxnSpent(self, script: bytes, outid: bytes | None = None) -> bool:
         secret_hash = atomic_swap_1.extractScriptSecretHash(script)
         locktime = self.extractHTLCLockVal(script, is_nav=False)
         self._log.debug(
             f"isHTLCTxnSpent: secret_hash={secret_hash.hex()} {locktime=} script={script.hex()}"
         )
         try:
+            # Covers the case where the HTLC output is still listed by listblsctunspent
             utxos = self._listBlsctUnspent()
             for utxo in utxos:
                 spk = utxo.get("scriptPubKey", "")
@@ -1035,24 +1060,43 @@ class NAVInterface(BTCInterface):
                     # is spent by an external wallet. gettxout queries the consensus UTXO
                     # set directly (wallet-independent, mempool-independent) and returns an
                     # empty result once the output is confirmed-spent.
-                    outid = utxo.get("outid")
-                    if outid:
-                        result = self.rpc("gettxout", [outid])
+                    utxo_outid = utxo.get("outid")
+                    if utxo_outid:
+                        result = self.rpc("gettxout", [utxo_outid, False])
                         if result:
                             # Still in consensus UTXO set → genuinely unspent
                             self._log.debug(
-                                f"isHTLCTxnSpent: outid={outid[:16]}... in UTXO set (unspent)"
+                                f"isHTLCTxnSpent: outid={utxo_outid[:16]}... in UTXO set (unspent)"
                             )
                             return False
-                        else:
-                            # Empty result → confirmed spent
+                        if not self._isHTLCOutputMined(utxo_outid):
+                            # Empty result for an output not mined yet → unspent
                             self._log.debug(
-                                f"isHTLCTxnSpent: outid={outid[:16]}... not in UTXO set (spent)"
+                                f"isHTLCTxnSpent: outid={utxo_outid[:16]}... not mined yet"
                             )
-                            return True
+                            return False
+                        # Empty result for a mined output → confirmed spent
+                        self._log.debug(
+                            f"isHTLCTxnSpent: outid={utxo_outid[:16]}... not in UTXO set (spent)"
+                        )
+                        return True
                     # No outid available — fall back to listblsctunspent result
                     self._log.debug(
                         f"isHTLCTxnSpent: found matching utxo, not spent yet: {utxo=}"
+                    )
+                    return False
+            # Covers the case where the HTLC output is not listed. listblsctunspent drops
+            # an output as soon as its spend is in the mempool, so check the confirmed
+            # UTXO set with the stored outid before reporting it spent
+            if outid is not None:
+                if self.rpc("gettxout", [outid.hex(), False]):
+                    self._log.debug(
+                        f"isHTLCTxnSpent: {secret_hash.hex()} spent in mempool only"
+                    )
+                    return False
+                if not self._isHTLCOutputMined(outid.hex()):
+                    self._log.debug(
+                        f"isHTLCTxnSpent: {secret_hash.hex()} not mined yet"
                     )
                     return False
             self._log.debug(f"isHTLCTxnSpent: {secret_hash.hex()} is spent")
@@ -1110,9 +1154,8 @@ class NAVInterface(BTCInterface):
             return
 
         bid.recovered_secret = secret
-        # Offerer spent the NAV PTx (using this preimage) — mark it redeemed
-        if bid.participate_tx:
-            bid.setPTxState(TxStates.TX_REDEEMED)
+        # The PTX is marked redeemed once the offerer's redeem is mined, by
+        # handleSwapParticipating or detectNavPtxSpend
         delay = self._sc.get_short_delay_event_seconds()
         self._sc.log.info(
             f"Redeeming ITX for bid {self._sc.log.id(bid_id)} in {delay} seconds."
