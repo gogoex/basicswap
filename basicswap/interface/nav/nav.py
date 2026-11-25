@@ -13,6 +13,8 @@ from basicswap.db import Concepts, SwapTx
 from typing import Optional, Any, TypedDict
 from basicswap.basicswap_util import (
     ActionTypes,
+    BidStates,
+    DebugTypes,
     EventLogTypes,
     MessageTypes,
     TxLockTypes,
@@ -398,6 +400,15 @@ class NAVInterface(BTCInterface):
         bidder_privkey = self._sc.getContractPrivkey(bid_date, bid.contract_count)
         lock_value = self.getLockValue(offer, is_initiate=False)
         blinding_key = self.deriveBlindingKey(bidder_privkey, bid.nav_offerer_pubkey)
+        amount_to: int = bid.amount_to
+        if bid.debug_ind == DebugTypes.MAKE_INVALID_PTX:
+            amount_to -= 1
+            self._sc.logBidEvent(
+                bid.bid_id,
+                EventLogTypes.DEBUG_TWEAK_APPLIED,
+                f"Make invalid PTx for testing: {bid.debug_ind}",
+                None,
+            )
         # Create funded PTX and PTX refund txn
         txn_funded, vout_index = self.createFundedHTLCTxn(
             nav_addr_redeem,
@@ -405,7 +416,7 @@ class NAVInterface(BTCInterface):
             secret_hash,
             lock_value,
             blinding_key,
-            bid.amount_to,
+            amount_to,
         )
         participate_script = self.createFakeNonNavHTLCScript(secret_hash, lock_value)
         refund_txn = self._sc.createRefundTxn(
@@ -707,18 +718,27 @@ class NAVInterface(BTCInterface):
                     f"getNavLockTxHeight: HTLC UTxO spk_secret_hash={spk_secret_hash} spk_lock_val={spk_lock_val}"
                 )
                 if spk_secret_hash == secret_hash:
+                    outid = utxo.get("outid", None) or utxo.get("outputHash", "")
                     confirmations = utxo.get("confirmations", 0)
-                    chain_info = self.rpc("getblockchaininfo")
-                    chain_height = chain_info["blocks"]
-                    block_height = (
-                        max(0, chain_height - confirmations + 1)
-                        if confirmations > 0
-                        else 0
-                    )
+                    block_height = 0
+                    if confirmations > 0:
+                        # Take confirmations and the tip from one gettxout call; a block
+                        # found between listblsctunspent and a separate tip query shifts
+                        # the height by one, and the two sides then derive different
+                        # PTX lock values
+                        txo = self.rpc("gettxout", [outid, False])
+                        if txo:
+                            confirmations = txo["confirmations"]
+                            tip_height = self.rpc("getblockheader", [txo["bestblock"]])[
+                                "height"
+                            ]
+                        else:
+                            tip_height = self.rpc("getblockchaininfo")["blocks"]
+                        block_height = max(0, tip_height - confirmations + 1)
                     rv = {
                         "depth": confirmations,
                         "height": block_height,
-                        "outid": utxo.get("outid", None) or utxo.get("outputHash", ""),
+                        "outid": outid,
                         "value": int(round(utxo.get("amount", 0) * 100_000_000)),
                         "lock_val": spk_lock_val,
                     }
@@ -1156,11 +1176,23 @@ class NAVInterface(BTCInterface):
         bid.recovered_secret = secret
         # The PTX is marked redeemed once the offerer's redeem is mined, by
         # handleSwapParticipating or detectNavPtxSpend
-        delay = self._sc.get_short_delay_event_seconds()
-        self._sc.log.info(
-            f"Redeeming ITX for bid {self._sc.log.id(bid_id)} in {delay} seconds."
-        )
-        self._sc.createAction(delay, ActionTypes.REDEEM_ITX, bid_id)
+        if bid.debug_ind == DebugTypes.DONT_SPEND_ITX:
+            self._sc.log.debug(
+                f"{self._sc.logIDB(bid_id)}: Abandoning for testing: {bid.debug_ind}, {DebugTypes(bid.debug_ind).name}."
+            )
+            bid.setState(BidStates.BID_ABANDONED)
+            self._sc.logBidEvent(
+                bid.bid_id,
+                EventLogTypes.DEBUG_TWEAK_APPLIED,
+                f"ind {bid.debug_ind}",
+                None,
+            )
+        else:
+            delay = self._sc.get_short_delay_event_seconds()
+            self._sc.log.info(
+                f"Redeeming ITX for bid {self._sc.log.id(bid_id)} in {delay} seconds."
+            )
+            self._sc.createAction(delay, ActionTypes.REDEEM_ITX, bid_id)
         self._sc.saveBid(bid_id, bid)
 
     def publishPtx(self, bid_id, bid, txn) -> None:
@@ -1220,6 +1252,29 @@ class NAVInterface(BTCInterface):
             bid.amount_to,
             bid.chain_b_height_start,
         )
+        if found is not None and bid.was_received and found["value"] != bid.amount_to:
+            # Treat it like an invalid lock tx B on other coins: log it and keep
+            # waiting, so the ITX is refunded instead of the bid being errored
+            self._log.warning(
+                f"NAV PTX {found['outid']} amount {found['value']} != {bid.amount_to}"
+            )
+            cursor = self._sc.openDB()
+            try:
+                if (
+                    self._sc.countBidEvents(
+                        bid, EventLogTypes.LOCK_TX_B_INVALID, cursor
+                    )
+                    < 1
+                ):
+                    self._sc.logBidEvent(
+                        bid.bid_id,
+                        EventLogTypes.LOCK_TX_B_INVALID,
+                        "Detected invalid lock tx B",
+                        cursor,
+                    )
+            finally:
+                self._sc.closeDB(cursor)
+            return None
         if found is not None and bid.participate_tx is None:
             bid.participate_tx = SwapTx(
                 bid_id=bid.bid_id,

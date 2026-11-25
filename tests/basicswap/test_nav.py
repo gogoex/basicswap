@@ -429,6 +429,7 @@ def _mk_bid(
 ):
     b = types.SimpleNamespace(
         was_received=was_received,
+        debug_ind=None,
         participate_tx=(
             types.SimpleNamespace(script=b"ptx", txid=None) if has_ptx else None
         ),
