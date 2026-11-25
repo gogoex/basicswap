@@ -62,7 +62,9 @@ def prepareNavDataDir(
     if os.path.exists(cfg_file_path):
         return node_dir
     with open(cfg_file_path, "w+") as fp:
-        fp.write("regtest=1\n")
+        # naviod 0.2.2 rejects BLSCT txns on regtest (blsct-tx-not-allowed)
+        fp.write("chain=blsctregtest\n")
+        fp.write("[blsctregtest]\n")
         fp.write("port=" + str(base_p2p_port + node_id) + "\n")
         fp.write("rpcport=" + str(base_rpc_port + node_id) + "\n")
         salt = generate_salt(16)
@@ -121,7 +123,7 @@ def run_test_success_path_lock_type(
         amt_swap,
         rate_swap,
         amt_swap,
-        SwapTypes.SELLER_FIRST,
+        SwapTypes.SECRET_HASH_BLSCT,
         lock_type,
         lock_value,
     )
@@ -160,7 +162,7 @@ def run_test_success_path(self, coin_from: Coins, coin_to: Coins):
         self,
         coin_from,
         coin_to,
-        TxLockTypes.SEQUENCE_LOCK_TIME,
+        TxLockTypes.ABS_LOCK_TIME,
         48 * 60 * 60,
     )
 
@@ -178,6 +180,24 @@ def check_event_order(swap_client, bid_id: bytes, expected, forbidden=()) -> Non
         assert event_type in remaining, f"{event_type.name} missing or out of order"
     for event_type in forbidden:
         assert event_type not in seen, f"unexpected {event_type.name}"
+
+
+def run_test_sequence_lock_rejected(
+    self, coin_from: Coins, coin_to: Coins, lock_type: TxLockTypes, lock_value: int
+):
+    # NAV HTLCs only support absolute locks, postOffer must reject CSV locks
+    swap_client = self.swap_clients[0]
+    with self.assertRaisesRegex(ValueError, "require an absolute lock"):
+        swap_client.postOffer(
+            coin_from,
+            coin_to,
+            swap_client.ci(coin_from).make_int(1.0),
+            swap_client.ci(coin_to).make_int(1.0),
+            swap_client.ci(coin_from).make_int(1.0),
+            SwapTypes.SECRET_HASH_BLSCT,
+            lock_type,
+            lock_value,
+        )
 
 
 def run_test_bad_ptx(self, coin_from: Coins, coin_to: Coins):
@@ -201,9 +221,9 @@ def run_test_bad_ptx(self, coin_from: Coins, coin_to: Coins):
         amt_swap,
         rate_swap,
         amt_swap,
-        SwapTypes.SELLER_FIRST,
-        TxLockTypes.SEQUENCE_LOCK_BLOCKS,
-        10,
+        SwapTypes.SECRET_HASH_BLSCT,
+        TxLockTypes.ABS_LOCK_BLOCKS,
+        30,
         auto_accept_bids=True,
     )
 
@@ -275,9 +295,9 @@ def run_test_itx_refund(self, coin_from: Coins, coin_to: Coins):
         swap_value,
         rate_swap,
         swap_value,
-        SwapTypes.SELLER_FIRST,
-        TxLockTypes.SEQUENCE_LOCK_BLOCKS,
-        12,
+        SwapTypes.SECRET_HASH_BLSCT,
+        TxLockTypes.ABS_LOCK_BLOCKS,
+        80,
     )
 
     wait_for_offer(test_delay_event, swap_clients[node_to], offer_id)
@@ -307,7 +327,7 @@ def run_test_itx_refund(self, coin_from: Coins, coin_to: Coins):
         bid_id,
         TxStates.TX_REFUNDED,
         TxStates.TX_REDEEMED,
-        wait_for=120,
+        wait_for=300,
     )
 
     wait_for_bid(
@@ -366,6 +386,33 @@ class Test(BaseTest):
             )
         )
         logging.info("Started %s %d", NAVIOD, cls.nav_daemons[-1].handle.pid)
+        if not cls.restore_instance:
+            # naviod 0.2.2 creates no default wallet
+            waitForRPC(
+                make_rpc_func(i, base_rpc_port=NAV_BASE_RPC_PORT),
+                test_delay_event,
+                rpc_command="getblockchaininfo",
+                max_tries=12,
+            )
+            # wallet_name, disable_private_keys, blank, passphrase, avoid_reuse,
+            # descriptors, load_on_startup, external_signer, blsct, storage_output
+            callnoderpc(
+                i,
+                "createwallet",
+                [
+                    "wallet.dat",
+                    False,
+                    False,
+                    "",
+                    False,
+                    False,
+                    True,
+                    False,
+                    True,
+                    False,
+                ],
+                base_rpc_port=NAV_BASE_RPC_PORT,
+            )
         waitForRPC(
             make_rpc_func(i, base_rpc_port=NAV_BASE_RPC_PORT),
             test_delay_event,
@@ -377,26 +424,48 @@ class Test(BaseTest):
         sc.setDaemon(Coins.NAV, cls.nav_daemons[i])
 
     @classmethod
+    def getVoidNavAddress(cls) -> str:
+        # blsctregtest only mines to BLSCT addresses, take one from a wallet no
+        # swap client uses and unload it so node 0 keeps a single loaded wallet
+        try:
+            # wallet_name, disable_private_keys, blank, passphrase, avoid_reuse,
+            # descriptors, load_on_startup, external_signer, blsct, storage_output
+            callnoderpc(
+                0,
+                "createwallet",
+                ["void", False, False, "", False, False, False, False, True, False],
+                base_rpc_port=NAV_BASE_RPC_PORT,
+            )
+        except Exception:
+            callnoderpc(0, "loadwallet", ["void"], base_rpc_port=NAV_BASE_RPC_PORT)
+        addr = callnoderpc(
+            0,
+            "getnewaddress",
+            ["void"],
+            wallet="void",
+            base_rpc_port=NAV_BASE_RPC_PORT,
+        )
+        callnoderpc(0, "unloadwallet", ["void"], base_rpc_port=NAV_BASE_RPC_PORT)
+        return addr
+
+    @classmethod
     def prepareExtraCoins(cls):
         if cls.restore_instance:
-            void_block_rewards_pubkey = cls.getRandomPubkey()
-            cls.nav_addr = (
-                cls.swap_clients[0]
-                .ci(Coins.NAV)
-                .pubkey_to_address(void_block_rewards_pubkey)
-            )
+            cls.nav_addr = cls.getVoidNavAddress()
         else:
             num_blocks = 400
             cls.nav_addr = callnoderpc(
                 0, "getnewaddress", ["mining_addr"], base_rpc_port=NAV_BASE_RPC_PORT
             )
             logging.info("Mining %d NAV blocks to %s", num_blocks, cls.nav_addr)
-            callnoderpc(
-                0,
-                "generatetoaddress",
-                [num_blocks, cls.nav_addr],
-                base_rpc_port=NAV_BASE_RPC_PORT,
-            )
+            # BLSCT mining is slow, keep each call under the 10s rpc timeout
+            for _ in range(num_blocks // 100):
+                callnoderpc(
+                    0,
+                    "generatetoblsctaddress",
+                    [100, cls.nav_addr],
+                    base_rpc_port=NAV_BASE_RPC_PORT,
+                )
 
             # Fund both nodes' BLSCT wallets; initialiseWallet has run at this point
             nav_blsct_addr0 = (
@@ -409,36 +478,31 @@ class Test(BaseTest):
                 callnoderpc(
                     0,
                     "sendtoaddress",
-                    [nav_blsct_addr0, 1000],
+                    [nav_blsct_addr0, 100],
                     base_rpc_port=NAV_BASE_RPC_PORT,
                 )
                 callnoderpc(
                     0,
                     "sendtoaddress",
-                    [nav_blsct_addr1, 1000],
+                    [nav_blsct_addr1, 100],
                     base_rpc_port=NAV_BASE_RPC_PORT,
                 )
 
             # Confirm the sends
             callnoderpc(
                 0,
-                "generatetoaddress",
+                "generatetoblsctaddress",
                 [10, cls.nav_addr],
                 base_rpc_port=NAV_BASE_RPC_PORT,
             )
 
             # Switch mining to a void address so wallet amounts stay constant
-            void_block_rewards_pubkey = cls.getRandomPubkey()
-            cls.nav_addr = (
-                cls.swap_clients[0]
-                .ci(Coins.NAV)
-                .pubkey_to_address(void_block_rewards_pubkey)
-            )
+            cls.nav_addr = cls.getVoidNavAddress()
             num_blocks = 100
             logging.info("Mining %d NAV blocks to %s", num_blocks, cls.nav_addr)
             callnoderpc(
                 0,
-                "generatetoaddress",
+                "generatetoblsctaddress",
                 [num_blocks, cls.nav_addr],
                 base_rpc_port=NAV_BASE_RPC_PORT,
             )
@@ -470,7 +534,7 @@ class Test(BaseTest):
         super(Test, cls).coins_loop()
         callnoderpc(
             0,
-            "generatetoaddress",
+            "generatetoblsctaddress",
             [1, cls.nav_addr],
             base_rpc_port=NAV_BASE_RPC_PORT,
         )
@@ -481,7 +545,7 @@ class Test(BaseTest):
         )
 
     def mineBlock(self, num_blocks: int = 1):
-        self.callnoderpc("generatetoaddress", [num_blocks, self.nav_addr])
+        self.callnoderpc("generatetoblsctaddress", [num_blocks, self.nav_addr])
 
     def test_001_navio_wallet(self):
         logging.info("---------- Test navio wallet")
@@ -510,13 +574,13 @@ class Test(BaseTest):
     def test_07_nav_part_itx_refund(self):
         run_test_itx_refund(self, Coins.NAV, Coins.PART)
 
-    def test_08_part_nav_sequence_lock_blocks(self):
-        run_test_success_path_lock_type(
+    def test_08_part_nav_sequence_lock_blocks_rejected(self):
+        run_test_sequence_lock_rejected(
             self, Coins.PART, Coins.NAV, TxLockTypes.SEQUENCE_LOCK_BLOCKS, 10
         )
 
-    def test_09_nav_part_sequence_lock_time(self):
-        run_test_success_path_lock_type(
+    def test_09_nav_part_sequence_lock_time_rejected(self):
+        run_test_sequence_lock_rejected(
             self, Coins.NAV, Coins.PART, TxLockTypes.SEQUENCE_LOCK_TIME, 48 * 60 * 60
         )
 
